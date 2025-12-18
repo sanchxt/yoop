@@ -229,11 +229,31 @@ impl MdnsBroadcaster {
         if let Some(instance_name) = instance_name {
             let full_name = format!("{instance_name}.{SERVICE_TYPE}");
 
-            self.daemon
+            let receiver = self
+                .daemon
                 .as_ref()
                 .ok_or_else(|| Error::Internal("mDNS daemon already shutdown".to_string()))?
                 .unregister(&full_name)
                 .map_err(|e| Error::Internal(format!("Failed to unregister mDNS service: {e}")))?;
+
+            // Wait for the unregister operation to complete
+            // This prevents "sending on a closed channel" errors
+            match tokio::time::timeout(
+                std::time::Duration::from_millis(500),
+                async { receiver.recv_async().await },
+            )
+            .await
+            {
+                Ok(Ok(status)) => {
+                    tracing::debug!(instance = %instance_name, ?status, "mDNS unregister completed");
+                }
+                Ok(Err(e)) => {
+                    tracing::debug!(instance = %instance_name, "mDNS unregister channel closed: {e}");
+                }
+                Err(_) => {
+                    tracing::debug!(instance = %instance_name, "mDNS unregister timed out");
+                }
+            }
 
             tracing::info!(instance = %instance_name, "Unregistered mDNS service");
         }
@@ -247,14 +267,24 @@ impl MdnsBroadcaster {
     ///
     /// Returns an error if the shutdown fails.
     pub fn shutdown(mut self) -> Result<()> {
-        // Brief delay to let the daemon process any pending operations (e.g., unregister)
-        // This prevents "sending on a closed channel" errors from pending events
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
         if let Some(daemon) = self.daemon.take() {
-            daemon
+            let receiver = daemon
                 .shutdown()
                 .map_err(|e| Error::Internal(format!("Failed to shutdown mDNS daemon: {e}")))?;
+
+            // Wait for the shutdown to complete synchronously
+            // Use a timeout to avoid blocking forever
+            match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(status) => {
+                    tracing::debug!(?status, "mDNS broadcaster shutdown completed");
+                }
+                Err(flume::RecvTimeoutError::Timeout) => {
+                    tracing::debug!("mDNS broadcaster shutdown timed out");
+                }
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    tracing::debug!("mDNS broadcaster shutdown channel disconnected");
+                }
+            }
         }
         Ok(())
     }
@@ -262,12 +292,22 @@ impl MdnsBroadcaster {
 
 impl Drop for MdnsBroadcaster {
     fn drop(&mut self) {
-        // Brief delay to let the daemon process any pending operations (e.g., unregister)
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
         if let Some(daemon) = self.daemon.take() {
-            if let Err(e) = daemon.shutdown() {
-                tracing::debug!("mDNS broadcaster shutdown during drop: {e}");
+            match daemon.shutdown() {
+                Ok(receiver) => {
+                    // Wait for shutdown to complete with a timeout
+                    match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
+                        Ok(status) => {
+                            tracing::debug!(?status, "mDNS broadcaster drop shutdown completed");
+                        }
+                        Err(_) => {
+                            tracing::debug!("mDNS broadcaster drop shutdown timed out or disconnected");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("mDNS broadcaster shutdown during drop: {e}");
+                }
             }
         }
     }
@@ -408,34 +448,55 @@ impl MdnsListener {
         // Stop browsing first to properly clean up
         self.stop_browsing();
 
-        // Brief delay to let the daemon process the stop_browse before shutdown
-        // This prevents "sending on a closed channel" errors from pending events
-        std::thread::sleep(std::time::Duration::from_millis(50));
-
         if let Some(daemon) = self.daemon.take() {
-            daemon
+            let receiver = daemon
                 .shutdown()
                 .map_err(|e| Error::Internal(format!("Failed to shutdown mDNS daemon: {e}")))?;
+
+            // Wait for the shutdown to complete synchronously
+            // Use a timeout to avoid blocking forever
+            match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
+                Ok(status) => {
+                    tracing::debug!(?status, "mDNS listener shutdown completed");
+                }
+                Err(flume::RecvTimeoutError::Timeout) => {
+                    tracing::debug!("mDNS listener shutdown timed out");
+                }
+                Err(flume::RecvTimeoutError::Disconnected) => {
+                    tracing::debug!("mDNS listener shutdown channel disconnected");
+                }
+            }
         }
         Ok(())
     }
 }
 
 impl Drop for MdnsListener {
+    #[allow(clippy::cognitive_complexity)]
     fn drop(&mut self) {
         // Stop browsing first to prevent "sending on a closed channel" error
         if let Some(ref daemon) = self.daemon {
             if let Err(e) = daemon.stop_browse(SERVICE_TYPE) {
                 tracing::debug!("Failed to stop mDNS browse during drop: {e}");
             }
-
-            // Brief delay to let the daemon process the stop_browse before shutdown
-            std::thread::sleep(std::time::Duration::from_millis(50));
         }
 
         if let Some(daemon) = self.daemon.take() {
-            if let Err(e) = daemon.shutdown() {
-                tracing::debug!("mDNS listener shutdown during drop: {e}");
+            match daemon.shutdown() {
+                Ok(receiver) => {
+                    // Wait for shutdown to complete with a timeout
+                    match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
+                        Ok(status) => {
+                            tracing::debug!(?status, "mDNS listener drop shutdown completed");
+                        }
+                        Err(_) => {
+                            tracing::debug!("mDNS listener drop shutdown timed out or disconnected");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("mDNS listener shutdown during drop: {e}");
+                }
             }
         }
     }
