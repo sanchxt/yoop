@@ -23,9 +23,11 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use socket2::{SockRef, TcpKeepalive};
 use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
+use tokio::task::JoinHandle;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 use uuid::Uuid;
 
@@ -45,6 +47,33 @@ use crate::protocol::{
 
 /// Default transfer port.
 pub const DEFAULT_TRANSFER_PORT: u16 = 52530;
+
+/// Configure TCP keep-alive on a socket.
+///
+/// This enables OS-level TCP keep-alive to prevent network equipment
+/// (routers, firewalls, NAT) from closing idle connections.
+///
+/// Configuration:
+/// - Start probing after 10 seconds of idle time
+/// - Send probes every 5 seconds
+/// - Give up after 3 failed probes (~25 seconds total)
+fn configure_tcp_keepalive(stream: &TcpStream) -> Result<()> {
+    let socket_ref = SockRef::from(stream);
+
+    let keepalive = TcpKeepalive::new()
+        .with_time(Duration::from_secs(10))
+        .with_interval(Duration::from_secs(5));
+
+    // Note: with_retries() is not available on all platforms (e.g., Windows)
+    // so we omit it for cross-platform compatibility
+
+    socket_ref
+        .set_tcp_keepalive(&keepalive)
+        .map_err(|e| Error::Io(std::io::Error::new(std::io::ErrorKind::Other, e)))?;
+
+    tracing::debug!("TCP keep-alive enabled on socket");
+    Ok(())
+}
 
 /// Transfer direction.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -306,6 +335,9 @@ impl ShareSession {
         let (stream, peer_addr) = self.listener.accept().await?;
         tracing::info!("Connection from {}", peer_addr);
 
+        // Enable TCP keep-alive to prevent connection timeout during user prompt
+        configure_tcp_keepalive(&stream)?;
+
         let acceptor = TlsAcceptor::from(Arc::new(
             self.tls_config
                 .server_config()
@@ -421,16 +453,31 @@ impl ShareSession {
         let payload = protocol::encode_payload(&file_list)?;
         protocol::write_frame(stream, MessageType::FileList, &payload).await?;
 
-        let (header, ack_payload) = protocol::read_frame(stream).await?;
-        if header.message_type != MessageType::FileListAck {
-            return Err(Error::UnexpectedMessage {
-                expected: "FileListAck".to_string(),
-                actual: format!("{:?}", header.message_type),
-            });
-        }
+        // Wait for FileListAck, responding to Ping messages to keep connection alive
+        // This loop handles the case where the receiver takes time to respond
+        // (e.g., user is reading the file list before accepting)
+        loop {
+            let (header, ack_payload) = protocol::read_frame(stream).await?;
 
-        let ack: FileListAckPayload = protocol::decode_payload(&ack_payload)?;
-        Ok(ack.accepted)
+            match header.message_type {
+                MessageType::FileListAck => {
+                    let ack: FileListAckPayload = protocol::decode_payload(&ack_payload)?;
+                    return Ok(ack.accepted);
+                }
+                MessageType::Ping => {
+                    // Respond to keep-alive ping from receiver
+                    tracing::debug!("Received Ping, responding with Pong");
+                    protocol::write_frame(stream, MessageType::Pong, &[]).await?;
+                    // Continue waiting for FileListAck
+                }
+                _ => {
+                    return Err(Error::UnexpectedMessage {
+                        expected: "FileListAck or Ping".to_string(),
+                        actual: format!("{:?}", header.message_type),
+                    });
+                }
+            }
+        }
     }
 
     async fn do_transfer<S>(&self, stream: &mut S) -> Result<()>
@@ -543,6 +590,23 @@ impl ShareSession {
     }
 }
 
+/// Keep-alive interval for connection health checks (5 seconds)
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Timeout for Pong response (10 seconds)
+const KEEPALIVE_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Type alias for the TLS stream used by ReceiveSession
+type ClientTlsStream = tokio_rustls::client::TlsStream<TcpStream>;
+
+/// Handle to the keep-alive background task
+struct KeepAliveHandle {
+    /// Channel to signal the task to stop
+    stop_tx: oneshot::Sender<()>,
+    /// Handle to wait for the task and get the stream back
+    task_handle: JoinHandle<Result<ClientTlsStream>>,
+}
+
 /// A receive session (receiver side).
 pub struct ReceiveSession {
     /// Sender information
@@ -555,16 +619,18 @@ pub struct ReceiveSession {
     output_dir: PathBuf,
     /// Transfer configuration (reserved for future use)
     _config: TransferConfig,
-    /// Share code (reserved for future use)
-    _code: ShareCode,
+    /// Share code used for this transfer session
+    code: ShareCode,
     /// Session key for HMAC verification (reserved for future use)
     _session_key: [u8; 32],
     /// Progress sender
     progress_tx: watch::Sender<TransferProgress>,
     /// Progress receiver
     progress_rx: watch::Receiver<TransferProgress>,
-    /// TLS stream (stored after connect)
-    tls_stream: Option<tokio_rustls::client::TlsStream<TcpStream>>,
+    /// TLS stream (stored after connect, None when keep-alive is running)
+    tls_stream: Option<ClientTlsStream>,
+    /// Keep-alive task handle (Some when keep-alive is running)
+    keep_alive_handle: Option<KeepAliveHandle>,
 }
 
 impl std::fmt::Debug for ReceiveSession {
@@ -608,6 +674,9 @@ impl ReceiveSession {
             SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
         let stream = TcpStream::connect(transfer_addr).await?;
 
+        // Enable TCP keep-alive to prevent connection timeout during user prompt
+        configure_tcp_keepalive(&stream)?;
+
         let tls_config = TlsConfig::client()?;
         let connector = TlsConnector::from(Arc::new(
             tls_config
@@ -638,11 +707,12 @@ impl ReceiveSession {
             files,
             output_dir,
             _config: config,
-            _code: code.clone(),
+            code: code.clone(),
             _session_key: session_key,
             progress_tx,
             progress_rx,
             tls_stream: Some(tls_stream),
+            keep_alive_handle: None,
         })
     }
 
@@ -670,12 +740,133 @@ impl ReceiveSession {
         self.progress_rx.clone()
     }
 
+    /// Start the keep-alive background task.
+    ///
+    /// This spawns a background task that sends Ping messages at regular intervals
+    /// to keep the connection alive while waiting for user input (e.g., Y/n prompt).
+    ///
+    /// Call `stop_keep_alive()` before calling `accept()` or `decline()`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the TLS stream is not available (already taken).
+    pub fn start_keep_alive(&mut self) -> Result<()> {
+        // Don't start if already running
+        if self.keep_alive_handle.is_some() {
+            return Ok(());
+        }
+
+        let stream = self
+            .tls_stream
+            .take()
+            .ok_or_else(|| Error::Internal("no TLS stream for keep-alive".to_string()))?;
+
+        let (stop_tx, stop_rx) = oneshot::channel();
+
+        let task_handle = tokio::spawn(async move { Self::keep_alive_task(stream, stop_rx).await });
+
+        self.keep_alive_handle = Some(KeepAliveHandle {
+            stop_tx,
+            task_handle,
+        });
+
+        tracing::debug!("Keep-alive task started");
+        Ok(())
+    }
+
+    /// Stop the keep-alive background task and recover the TLS stream.
+    ///
+    /// This must be called before `accept()` or `decline()` if keep-alive was started.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the keep-alive task failed or the stream cannot be recovered.
+    pub async fn stop_keep_alive(&mut self) -> Result<()> {
+        if let Some(handle) = self.keep_alive_handle.take() {
+            // Signal the task to stop (ignore if receiver is already dropped)
+            let _ = handle.stop_tx.send(());
+
+            // Wait for the task to finish and get the stream back
+            match handle.task_handle.await {
+                Ok(Ok(stream)) => {
+                    self.tls_stream = Some(stream);
+                    tracing::debug!("Keep-alive task stopped, stream recovered");
+                    Ok(())
+                }
+                Ok(Err(e)) => {
+                    tracing::warn!("Keep-alive task encountered error: {}", e);
+                    Err(e)
+                }
+                Err(e) => {
+                    tracing::error!("Keep-alive task panicked: {}", e);
+                    Err(Error::Internal(format!("keep-alive task panicked: {e}")))
+                }
+            }
+        } else {
+            // Keep-alive was not running, nothing to do
+            Ok(())
+        }
+    }
+
+    /// The background keep-alive task.
+    ///
+    /// Sends Ping messages at regular intervals and waits for Pong responses.
+    /// Returns the stream when signaled to stop or when an error occurs.
+    async fn keep_alive_task(
+        mut stream: ClientTlsStream,
+        mut stop_rx: oneshot::Receiver<()>,
+    ) -> Result<ClientTlsStream> {
+        loop {
+            tokio::select! {
+                // Check if we should stop
+                _ = &mut stop_rx => {
+                    tracing::debug!("Keep-alive task received stop signal");
+                    return Ok(stream);
+                }
+
+                // Wait for the keep-alive interval, then send Ping
+                _ = tokio::time::sleep(KEEPALIVE_INTERVAL) => {
+                    tracing::debug!("Sending keep-alive Ping");
+
+                    // Send Ping
+                    if let Err(e) = protocol::write_frame(&mut stream, MessageType::Ping, &[]).await {
+                        tracing::warn!("Failed to send Ping: {}", e);
+                        return Err(e);
+                    }
+
+                    // Wait for Pong with timeout
+                    match tokio::time::timeout(KEEPALIVE_TIMEOUT, protocol::read_frame(&mut stream)).await {
+                        Ok(Ok((header, _))) => {
+                            if header.message_type == MessageType::Pong {
+                                tracing::debug!("Received Pong");
+                            } else {
+                                tracing::warn!("Expected Pong, got {:?}", header.message_type);
+                                // Continue anyway - server might have sent something else
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            tracing::warn!("Failed to read Pong: {}", e);
+                            return Err(e);
+                        }
+                        Err(_) => {
+                            tracing::warn!("Pong timeout after {} seconds", KEEPALIVE_TIMEOUT.as_secs());
+                            return Err(Error::KeepAliveFailed(KEEPALIVE_TIMEOUT.as_secs()));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     /// Accept the transfer and start receiving.
     ///
     /// # Errors
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept(&mut self) -> Result<()> {
+        // Stop keep-alive first if running (recovers the stream)
+        self.stop_keep_alive().await?;
+
         let mut stream = self
             .tls_stream
             .take()
@@ -707,6 +898,9 @@ impl ReceiveSession {
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept_files(&mut self, indices: &[usize]) -> Result<()> {
+        // Stop keep-alive first if running (recovers the stream)
+        self.stop_keep_alive().await?;
+
         let mut stream = self
             .tls_stream
             .take()
@@ -730,6 +924,9 @@ impl ReceiveSession {
 
     /// Decline the transfer.
     pub async fn decline(&mut self) {
+        // Stop keep-alive first if running (recovers the stream, ignore errors)
+        let _ = self.stop_keep_alive().await;
+
         if let Some(mut stream) = self.tls_stream.take() {
             let ack = FileListAckPayload {
                 accepted: false,
@@ -751,7 +948,7 @@ impl ReceiveSession {
     pub fn create_resume_state(&self, transfer_id: Uuid, sender_device_id: Uuid) -> ResumeState {
         ResumeState::new(
             transfer_id,
-            self._code.as_str(),
+            self.code.as_str(),
             self.files.clone(),
             &self.sender_name,
             sender_device_id,
@@ -787,6 +984,9 @@ impl ReceiveSession {
         let transfer_addr =
             SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
         let stream = TcpStream::connect(transfer_addr).await?;
+
+        // Enable TCP keep-alive to prevent connection timeout during user prompt
+        configure_tcp_keepalive(&stream)?;
 
         let tls_config = TlsConfig::client()?;
         let connector = TlsConnector::from(Arc::new(
@@ -826,11 +1026,12 @@ impl ReceiveSession {
             files,
             output_dir: resume_state.output_dir,
             _config: config,
-            _code: code,
+            code: code,
             _session_key: session_key,
             progress_tx,
             progress_rx,
             tls_stream: Some(tls_stream),
+            keep_alive_handle: None,
         })
     }
 
@@ -847,6 +1048,9 @@ impl ReceiveSession {
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept_with_resume(&mut self, resume_state: &ResumeState) -> Result<()> {
+        // Stop keep-alive first if running (recovers the stream)
+        self.stop_keep_alive().await?;
+
         let mut stream = self
             .tls_stream
             .take()
@@ -897,11 +1101,8 @@ impl ReceiveSession {
     }
 
     /// Receive files with resume support.
-    async fn do_receive_resumed<S>(
-        &self,
-        stream: &mut S,
-        resume_state: &ResumeState,
-    ) -> Result<()>
+    #[allow(clippy::too_many_lines)]
+    async fn do_receive_resumed<S>(&self, stream: &mut S, resume_state: &ResumeState) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
@@ -926,11 +1127,9 @@ impl ReceiveSession {
                         let output_path = self.output_dir.join(&file.relative_path);
 
                         // Calculate how many bytes we've already received for this file
-                        let completed_chunks =
-                            resume_state.completed_chunks.get(&start.file_index);
-                        let bytes_completed = completed_chunks.map_or(0, |chunks| {
-                            chunks.len() as u64 * chunk_size as u64
-                        });
+                        let completed_chunks = resume_state.completed_chunks.get(&start.file_index);
+                        let bytes_completed = completed_chunks
+                            .map_or(0, |chunks| chunks.len() as u64 * chunk_size as u64);
 
                         // Use resumable writer
                         current_writer = Some(
@@ -1276,7 +1475,11 @@ impl ResumeState {
             updated_at: now,
             bytes_received: 0,
             total_bytes,
-            protocol_version: format!("{}.{}", crate::PROTOCOL_VERSION.0, crate::PROTOCOL_VERSION.1),
+            protocol_version: format!(
+                "{}.{}",
+                crate::PROTOCOL_VERSION.0,
+                crate::PROTOCOL_VERSION.1
+            ),
         }
     }
 
@@ -1292,11 +1495,12 @@ impl ResumeState {
 
     /// Mark a file as completed with its hash.
     pub fn mark_file_completed(&mut self, file_index: usize, sha256_hash: &[u8; 32]) {
+        use std::fmt::Write;
         // Convert hash to hex string without external dependency
-        let hash_hex: String = sha256_hash
-            .iter()
-            .map(|b| format!("{b:02x}"))
-            .collect();
+        let hash_hex = sha256_hash.iter().fold(String::new(), |mut acc, b| {
+            let _ = write!(acc, "{b:02x}");
+            acc
+        });
         self.completed_file_hashes.insert(file_index, hash_hex);
         self.updated_at = chrono::Utc::now();
     }

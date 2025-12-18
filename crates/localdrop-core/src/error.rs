@@ -171,6 +171,10 @@ pub enum Error {
     /// Operation timeout
     #[error("operation timed out after {0} seconds")]
     Timeout(u64),
+
+    /// Keep-alive failed (connection may be dead)
+    #[error("keep-alive failed: no response after {0} seconds")]
+    KeepAliveFailed(u64),
 }
 
 impl Error {
@@ -203,6 +207,7 @@ impl Error {
                 | Self::ChecksumMismatch { .. }
                 | Self::RateLimited(_)
                 | Self::Timeout(_)
+                | Self::KeepAliveFailed(_)
         )
     }
 }

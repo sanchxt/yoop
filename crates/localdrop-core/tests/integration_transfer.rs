@@ -327,3 +327,170 @@ async fn test_progress_tracking() {
         "All bytes should be transferred"
     );
 }
+
+/// Test that keep-alive prevents connection timeout during user prompt delay.
+///
+/// This simulates a user taking time to read the transfer prompt before accepting.
+/// Without keep-alive, the connection would timeout after ~15-60 seconds.
+#[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
+async fn test_transfer_survives_delay_with_keepalive() {
+    let temp_dir = create_temp_dir();
+    let test_content = b"File transferred after delay with keep-alive";
+    let test_file = create_test_file(temp_dir.path(), "keepalive_test.txt", test_content);
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let config = test_config();
+
+    let mut share_session = ShareSession::new(std::slice::from_ref(&test_file), config.clone())
+        .await
+        .expect("Failed to create share session");
+    let code = share_session.code().clone();
+
+    let share_handle = tokio::spawn(async move { share_session.wait().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut receive_session = ReceiveSession::connect(&code, output_dir.clone(), config)
+        .await
+        .expect("Failed to connect to share");
+
+    let files = receive_session.files();
+    assert_eq!(files.len(), 1);
+    assert_eq!(files[0].size, test_content.len() as u64);
+
+    // Start keep-alive before the simulated user delay
+    receive_session
+        .start_keep_alive()
+        .expect("Failed to start keep-alive");
+
+    // Simulate user reading the prompt for 15 seconds
+    // This delay would normally cause the connection to drop without keep-alive
+    tokio::time::sleep(Duration::from_secs(15)).await;
+
+    // Accept should work because keep-alive kept the connection alive
+    receive_session
+        .accept()
+        .await
+        .expect("Failed to accept transfer after delay (keep-alive may have failed)");
+
+    share_handle
+        .await
+        .expect("Share task panicked")
+        .expect("Share failed");
+
+    let received_file = output_dir.join("keepalive_test.txt");
+    assert!(received_file.exists(), "Received file not found");
+    assert_files_equal(&test_file, &received_file);
+}
+
+/// Test that keep-alive can be started and stopped without affecting transfer.
+#[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
+async fn test_keepalive_start_stop_cycle() {
+    let temp_dir = create_temp_dir();
+    let test_content = b"File for keep-alive start/stop test";
+    let test_file = create_test_file(temp_dir.path(), "startstop.txt", test_content);
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let config = test_config();
+
+    let mut share_session = ShareSession::new(std::slice::from_ref(&test_file), config.clone())
+        .await
+        .expect("Failed to create share session");
+    let code = share_session.code().clone();
+
+    let share_handle = tokio::spawn(async move { share_session.wait().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut receive_session = ReceiveSession::connect(&code, output_dir.clone(), config)
+        .await
+        .expect("Failed to connect to share");
+
+    // Start keep-alive
+    receive_session
+        .start_keep_alive()
+        .expect("Failed to start keep-alive");
+
+    // Wait a bit for some ping/pong exchanges
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Stop keep-alive explicitly (not through accept/decline)
+    receive_session
+        .stop_keep_alive()
+        .await
+        .expect("Failed to stop keep-alive");
+
+    // Start again
+    receive_session
+        .start_keep_alive()
+        .expect("Failed to restart keep-alive");
+
+    // Wait again
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Now accept (which also stops keep-alive internally)
+    receive_session
+        .accept()
+        .await
+        .expect("Failed to accept transfer");
+
+    share_handle
+        .await
+        .expect("Share task panicked")
+        .expect("Share failed");
+
+    let received_file = output_dir.join("startstop.txt");
+    assert!(received_file.exists(), "Received file not found");
+    assert_files_equal(&test_file, &received_file);
+}
+
+/// Test declining a transfer after keep-alive was running.
+#[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
+async fn test_decline_after_keepalive() {
+    let temp_dir = create_temp_dir();
+    let test_content = b"File that will be declined after keep-alive";
+    let test_file = create_test_file(temp_dir.path(), "decline_keepalive.txt", test_content);
+    let output_dir = temp_dir.path().join("output");
+    std::fs::create_dir_all(&output_dir).unwrap();
+
+    let config = test_config();
+
+    let mut share_session = ShareSession::new(std::slice::from_ref(&test_file), config.clone())
+        .await
+        .expect("Failed to create share session");
+    let code = share_session.code().clone();
+
+    let share_handle = tokio::spawn(async move { share_session.wait().await });
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let mut receive_session = ReceiveSession::connect(&code, output_dir.clone(), config)
+        .await
+        .expect("Failed to connect to share");
+
+    assert_eq!(receive_session.files().len(), 1);
+
+    // Start keep-alive
+    receive_session
+        .start_keep_alive()
+        .expect("Failed to start keep-alive");
+
+    // Simulate user thinking
+    tokio::time::sleep(Duration::from_secs(3)).await;
+
+    // Decline (which stops keep-alive internally)
+    receive_session.decline().await;
+
+    let _share_result = share_handle.await.expect("Share task panicked");
+
+    let declined_file = output_dir.join("decline_keepalive.txt");
+    assert!(
+        !declined_file.exists(),
+        "File should not exist after decline"
+    );
+}

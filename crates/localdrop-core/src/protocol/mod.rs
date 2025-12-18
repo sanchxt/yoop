@@ -21,7 +21,10 @@
 //! - Type: Message type byte
 //! - Length: Payload length in bytes (big-endian)
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
+use tokio::time::timeout;
 
 use crate::error::{Error, Result};
 
@@ -346,6 +349,44 @@ where
     Ok(())
 }
 
+/// Read a complete frame from a stream with a timeout.
+///
+/// # Errors
+///
+/// Returns `Error::Timeout` if the operation exceeds the specified duration.
+/// Returns an error if reading fails or the frame is invalid.
+pub async fn read_frame_with_timeout<R>(
+    reader: &mut R,
+    duration: Duration,
+) -> Result<(FrameHeader, Vec<u8>)>
+where
+    R: tokio::io::AsyncReadExt + Unpin,
+{
+    timeout(duration, read_frame(reader))
+        .await
+        .map_err(|_| Error::Timeout(duration.as_secs()))?
+}
+
+/// Write a complete frame to a stream with a timeout.
+///
+/// # Errors
+///
+/// Returns `Error::Timeout` if the operation exceeds the specified duration.
+/// Returns an error if writing fails.
+pub async fn write_frame_with_timeout<W>(
+    writer: &mut W,
+    message_type: MessageType,
+    payload: &[u8],
+    duration: Duration,
+) -> Result<()>
+where
+    W: tokio::io::AsyncWriteExt + Unpin,
+{
+    timeout(duration, write_frame(writer, message_type, payload))
+        .await
+        .map_err(|_| Error::Timeout(duration.as_secs()))?
+}
+
 /// Encode a ChunkData payload (binary format).
 ///
 /// Format: file_index (4 bytes) | chunk_index (8 bytes) | checksum (8 bytes) | data
@@ -440,6 +481,101 @@ mod tests {
         let (header, read_payload) = read_frame(&mut cursor).await.expect("read frame");
 
         assert_eq!(header.message_type, MessageType::Hello);
+        assert_eq!(read_payload, payload);
+    }
+
+    #[tokio::test]
+    async fn test_ping_pong_roundtrip() {
+        // Test Ping frame
+        let mut buffer = Vec::new();
+        write_frame(&mut buffer, MessageType::Ping, &[])
+            .await
+            .expect("write ping");
+
+        let mut cursor = std::io::Cursor::new(buffer);
+        let (header, payload) = read_frame(&mut cursor).await.expect("read ping");
+
+        assert_eq!(header.message_type, MessageType::Ping);
+        assert!(payload.is_empty());
+
+        // Test Pong frame
+        let mut buffer = Vec::new();
+        write_frame(&mut buffer, MessageType::Pong, &[])
+            .await
+            .expect("write pong");
+
+        let mut cursor = std::io::Cursor::new(buffer);
+        let (header, payload) = read_frame(&mut cursor).await.expect("read pong");
+
+        assert_eq!(header.message_type, MessageType::Pong);
+        assert!(payload.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_read_frame_with_timeout_success() {
+        let mut buffer = Vec::new();
+
+        let payload = b"test data";
+        write_frame(&mut buffer, MessageType::Hello, payload)
+            .await
+            .expect("write frame");
+
+        let mut cursor = std::io::Cursor::new(buffer);
+        let result = read_frame_with_timeout(&mut cursor, Duration::from_secs(5)).await;
+
+        assert!(result.is_ok());
+        let (header, read_payload) = result.unwrap();
+        assert_eq!(header.message_type, MessageType::Hello);
+        assert_eq!(read_payload, payload);
+    }
+
+    #[tokio::test]
+    async fn test_read_frame_with_timeout_expires() {
+        // We need a stream that blocks forever, not one that returns EOF
+        // Use a never-ready stream to test timeout behavior
+        struct NeverReadyReader;
+
+        impl tokio::io::AsyncRead for NeverReadyReader {
+            fn poll_read(
+                self: std::pin::Pin<&mut Self>,
+                _cx: &mut std::task::Context<'_>,
+                _buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> std::task::Poll<std::io::Result<()>> {
+                std::task::Poll::Pending
+            }
+        }
+
+        let mut reader = NeverReadyReader;
+        let result = read_frame_with_timeout(&mut reader, Duration::from_millis(50)).await;
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            crate::error::Error::Timeout(secs) => {
+                assert_eq!(secs, 0); // 50ms rounds to 0 seconds
+            }
+            e => panic!("Expected Timeout error, got: {:?}", e),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_write_frame_with_timeout_success() {
+        let mut buffer = Vec::new();
+
+        let payload = b"test data";
+        let result = write_frame_with_timeout(
+            &mut buffer,
+            MessageType::Pong,
+            payload,
+            Duration::from_secs(5),
+        )
+        .await;
+
+        assert!(result.is_ok());
+
+        // Verify the frame was written correctly
+        let mut cursor = std::io::Cursor::new(buffer);
+        let (header, read_payload) = read_frame(&mut cursor).await.expect("read frame");
+        assert_eq!(header.message_type, MessageType::Pong);
         assert_eq!(read_payload, payload);
     }
 }
