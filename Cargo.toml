@@ -1,0 +1,118 @@
+[workspace]
+resolver = "2"
+members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.86.0"
+authors = ["LocalDrop Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/your-username/localdrop"
+homepage = "https://github.com/your-username/localdrop"
+description = "Cross-platform local network file sharing"
+readme = "README.md"
+keywords = ["file-sharing", "lan", "transfer", "local-network", "peer-to-peer"]
+categories = ["command-line-utilities", "network-programming"]
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1.43", features = ["full"] }
+
+# TLS and crypto
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2"
+rcgen = "0.13"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+sha2 = "0.10"
+hmac = "0.12"
+rand = "0.8"
+
+# Hashing (fast, non-crypto)
+xxhash-rust = { version = "0.8", features = ["xxh3", "xxh64"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# CLI
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+
+# TUI
+ratatui = "0.29"
+crossterm = "0.28"
+
+# Web server
+axum = "0.8"
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs"] }
+
+# Networking
+socket2 = { version = "0.5", features = ["all"] }
+
+# File handling
+walkdir = "2"
+mime_guess = "2"
+directories = "5"
+
+# Image processing (for previews)
+# Note: jpeg feature disabled due to zune-jpeg compatibility with Rust 1.86+
+# Using jpeg-encoder only for now; decoding will be added when zune-jpeg is fixed
+image = { version = "0.25", default-features = false, features = ["png", "gif", "webp"] }
+
+# QR code generation
+qrcode = "0.14"
+
+# Error handling
+thiserror = "2"
+anyhow = "1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# UUID
+uuid = { version = "1", features = ["v4", "serde"] }
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Testing
+tempfile = "3"
+
+# Hostname detection
+hostname = "0.4"
+
+# FFI (for future mobile bindings)
+# uniffi = "0.28"
+
+[workspace.lints.rust]
+unsafe_code = "warn"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+# Allow certain patterns
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+
+[profile.dev]
+# Faster builds in dev
+opt-level = 0
+
+[profile.dev.package."*"]
+# Optimize dependencies even in dev
+opt-level = 2
