@@ -1013,6 +1013,17 @@ impl AsyncWrite for TlsStreamKind {
     }
 }
 
+/// Cached clipboard content with metadata
+#[derive(Debug, Clone)]
+struct CachedClipboardContent {
+    content: ClipboardContent,
+    timestamp: chrono::DateTime<chrono::Utc>,
+    size: u64,
+}
+
+/// Thread-safe cache for clipboard content
+type ContentCache = Arc<tokio::sync::Mutex<Option<(u64, CachedClipboardContent)>>>;
+
 /// Runner for the sync session that handles the actual sync loop.
 pub struct SyncSessionRunner {
     tls_stream: TlsStreamKind,
@@ -1042,8 +1053,17 @@ impl SyncSessionRunner {
 
         // Create clipboard watcher
         let watcher = ClipboardWatcher::new();
-        let clipboard = create_clipboard()?;
+        let mut clipboard = create_clipboard()?;
+
+        // Initialize watcher with current clipboard hash to prevent false positives
+        let initial_hash = clipboard.content_hash();
+        watcher.set_last_hash(initial_hash);
+
         let (mut change_rx, watcher_handle) = watcher.start(clipboard);
+
+        // Shared content cache: outbound task stores detected content here,
+        // inbound task reads from here when responding to ClipboardRequest
+        let content_cache: ContentCache = Arc::new(tokio::sync::Mutex::new(None));
 
         // Take ownership of the stream and wrap in Arc<Mutex> for sharing
         let tls_stream = Arc::new(tokio::sync::Mutex::new(self.tls_stream));
@@ -1059,6 +1079,7 @@ impl SyncSessionRunner {
             let last_remote = Arc::clone(&last_remote_hash);
             let last_local = Arc::clone(&last_local_hash);
             let stream = Arc::clone(&tls_stream);
+            let cache = Arc::clone(&content_cache);
             tokio::spawn(async move {
                 while let Some(change) = change_rx.recv().await {
                     // Skip if this is content we just received
@@ -1067,6 +1088,19 @@ impl SyncSessionRunner {
                     }
 
                     last_local.store(change.hash, Ordering::SeqCst);
+
+                    // Cache the content for when peer requests it via ClipboardRequest
+                    {
+                        let mut cache_guard = cache.lock().await;
+                        *cache_guard = Some((
+                            change.hash,
+                            CachedClipboardContent {
+                                content: change.content.clone(),
+                                timestamp: change.timestamp,
+                                size: change.content.size(),
+                            },
+                        ));
+                    }
 
                     // Send ClipboardChanged notification
                     let notification = ClipboardChangedPayload {
@@ -1099,6 +1133,7 @@ impl SyncSessionRunner {
         let inbound_task = {
             let last_remote = Arc::clone(&last_remote_hash);
             let stream = Arc::clone(&tls_stream_clone);
+            let cache = Arc::clone(&content_cache);
             tokio::spawn(async move {
                 let mut clipboard = create_clipboard()?;
 
@@ -1121,35 +1156,61 @@ impl SyncSessionRunner {
                             )
                             .await?;
 
-                            // Wait for content
-                            let (header, data) = {
-                                let mut reader = stream.lock().await;
-                                protocol::read_frame(&mut *reader).await?
+                            // Wait for ClipboardData in a loop, handling other messages appropriately
+                            let content: Option<ClipboardContent> = loop {
+                                let (header, data) = {
+                                    let mut reader = stream.lock().await;
+                                    protocol::read_frame(&mut *reader).await?
+                                };
+
+                                match header.message_type {
+                                    MessageType::ClipboardData => {
+                                        // Parse content and break out of inner loop
+                                        if data.len() < 8 {
+                                            break None;
+                                        }
+
+                                        let width =
+                                            u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
+                                        let height =
+                                            u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                                        let content_data = &data[8..];
+
+                                        break ClipboardContent::from_bytes(
+                                            changed.content_type,
+                                            content_data,
+                                            Some(width),
+                                            Some(height),
+                                        )
+                                        .ok();
+                                    }
+                                    MessageType::Ping => {
+                                        // Handle Ping while waiting for ClipboardData
+                                        protocol::write_frame(
+                                            &mut *stream.lock().await,
+                                            MessageType::Pong,
+                                            &[],
+                                        )
+                                        .await?;
+                                        // Continue waiting for ClipboardData
+                                    }
+                                    MessageType::TransferCancel => {
+                                        // Graceful exit
+                                        return Ok(());
+                                    }
+                                    _ => {
+                                        // Ignore other messages (ClipboardAck, Pong, etc.)
+                                        // and continue waiting for ClipboardData
+                                    }
+                                }
                             };
-                            if header.message_type != MessageType::ClipboardData {
-                                continue;
-                            }
 
-                            // Parse content
-                            if data.len() < 8 {
-                                continue;
-                            }
-
-                            let width = u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                            let height = u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
-                            let content_data = &data[8..];
-
-                            if let Ok(content) = ClipboardContent::from_bytes(
-                                changed.content_type,
-                                content_data,
-                                Some(width),
-                                Some(height),
-                            ) {
-                                // Update hash before writing to prevent feedback
-                                last_remote.store(changed.checksum, Ordering::SeqCst);
-
-                                // Write to local clipboard
+                            // Apply content if successfully received
+                            if let Some(content) = content {
+                                // Write to local clipboard FIRST
                                 if clipboard.write(&content).is_ok() {
+                                    // Only update hash AFTER successful write
+                                    last_remote.store(changed.checksum, Ordering::SeqCst);
                                     let _ = event_tx
                                         .send(SyncEvent::Received {
                                             content_type: changed.content_type,
@@ -1174,13 +1235,21 @@ impl SyncSessionRunner {
                         }
                         MessageType::ClipboardRequest => {
                             // Peer is requesting our current content
-                            if let Ok(Some(content)) = clipboard.read() {
+                            // First try to get from cache (most recent detected change),
+                            // then fallback to reading clipboard directly
+                            let cached_content = {
+                                let mut cache_guard = cache.lock().await;
+                                cache_guard.take().map(|(_, c)| c.content)
+                            };
+                            let content = cached_content.or_else(|| clipboard.read().ok().flatten());
+
+                            if let Some(content) = content {
                                 let data = content.to_bytes();
                                 let (width, height) = match &content {
                                     ClipboardContent::Image { width, height, .. } => {
-                                        (*width, *height)
+                                        (width, height)
                                     }
-                                    ClipboardContent::Text(_) => (0, 0),
+                                    ClipboardContent::Text(_) => (&0, &0),
                                 };
 
                                 let mut response = Vec::with_capacity(8 + data.len());
