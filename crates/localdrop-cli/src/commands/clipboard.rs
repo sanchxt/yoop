@@ -6,7 +6,8 @@ use anyhow::{bail, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use localdrop_core::clipboard::{
-    ClipboardReceiveSession, ClipboardShareSession, ClipboardSyncSession, SyncSessionRunner,
+    diagnose_clipboard, ClipboardReceiveSession, ClipboardShareSession, ClipboardSyncSession,
+    SyncSessionRunner,
 };
 use localdrop_core::transfer::TransferConfig;
 
@@ -36,14 +37,17 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
     let session = match ClipboardShareSession::new(config).await {
         Ok(s) => s,
         Err(e) => {
+            let error_str = format!("{}", e);
             if json {
                 let output = serde_json::json!({
                     "status": "error",
-                    "error": format!("{}", e),
+                    "error": &error_str,
+                    "diagnostics": diagnose_clipboard(),
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else if !quiet {
                 eprintln!("  Error: {}", e);
+                print_clipboard_troubleshooting(&error_str);
             }
             bail!("{}", e);
         }
@@ -398,4 +402,50 @@ async fn run_sync_session(
             Err(e.into())
         }
     }
+}
+
+/// Print platform-specific troubleshooting hints for clipboard errors.
+fn print_clipboard_troubleshooting(error: &str) {
+    let is_empty = error.contains("clipboard is empty");
+    let is_access_error = error.contains("Cannot access clipboard");
+
+    if !is_empty && !is_access_error {
+        return;
+    }
+
+    eprintln!();
+    eprintln!("  Troubleshooting:");
+
+    #[cfg(target_os = "linux")]
+    {
+        if is_empty {
+            eprintln!("  - Make sure you've copied something to the clipboard first");
+        }
+        if std::env::var("WAYLAND_DISPLAY").is_ok() {
+            eprintln!("  - Running on Wayland - clipboard access should work");
+            if is_access_error {
+                eprintln!("  - Check if your compositor supports wlr-data-control protocol");
+            }
+        } else if std::env::var("DISPLAY").is_ok() {
+            eprintln!("  - Running on X11 - clipboard access should work");
+        } else {
+            eprintln!("  - No display server detected (DISPLAY/WAYLAND_DISPLAY not set)");
+            eprintln!("  - Run this command from a graphical terminal session");
+        }
+        eprintln!("  - Run with RUST_LOG=debug for detailed diagnostics");
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        eprintln!("  - Make sure you've copied something (Cmd+C) first");
+        eprintln!("  - Check System Preferences > Privacy & Security for clipboard access");
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        eprintln!("  - Make sure you've copied something (Ctrl+C) first");
+        eprintln!("  - Try closing other applications that might be locking the clipboard");
+    }
+
+    eprintln!();
 }

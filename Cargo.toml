@@ -91,7 +91,8 @@ tempfile = "3"
 hostname = "0.4"
 
 # Clipboard access (cross-platform)
-arboard = "3"
+# wayland-data-control enables wlr-data-control protocol for Wayland clipboard access
+arboard = { version = "3", features = ["wayland-data-control"] }
 
 # Async stream utilities
 async-stream = "0.3"

@@ -53,42 +53,57 @@ impl NativeClipboard {
 impl ClipboardAccess for NativeClipboard {
     fn read(&mut self) -> Result<Option<ClipboardContent>> {
         // Try to read text first
-        if let Ok(text) = self.clipboard.get_text() {
-            if !text.is_empty() {
+        match self.clipboard.get_text() {
+            Ok(text) if !text.is_empty() => {
+                tracing::trace!("Clipboard: read {} bytes of text", text.len());
                 return Ok(Some(ClipboardContent::Text(text)));
+            }
+            Ok(_) => {
+                tracing::trace!("Clipboard: text is empty, trying image");
+            }
+            Err(e) => {
+                tracing::debug!("Clipboard: failed to read text: {}", e);
+                // Continue to try image - text might just not be available
             }
         }
 
         // Try to read image
-        if let Ok(image) = self.clipboard.get_image() {
-            // Convert to PNG bytes
-            let width = u32::try_from(image.width)
-                .map_err(|_| Error::ClipboardError("image width too large".to_string()))?;
-            let height = u32::try_from(image.height)
-                .map_err(|_| Error::ClipboardError("image height too large".to_string()))?;
+        match self.clipboard.get_image() {
+            Ok(image) => {
+                // Convert to PNG bytes
+                let width = u32::try_from(image.width)
+                    .map_err(|_| Error::ClipboardError("image width too large".to_string()))?;
+                let height = u32::try_from(image.height)
+                    .map_err(|_| Error::ClipboardError("image height too large".to_string()))?;
 
-            // arboard gives us RGBA bytes
-            let rgba_data = image.bytes.into_owned();
+                // arboard gives us RGBA bytes
+                let rgba_data = image.bytes.into_owned();
 
-            // Encode as PNG
-            let mut png_data = Vec::new();
-            let encoder = image::codecs::png::PngEncoder::new_with_quality(
-                &mut png_data,
-                image::codecs::png::CompressionType::Fast,
-                image::codecs::png::FilterType::Adaptive,
-            );
+                // Encode as PNG
+                let mut png_data = Vec::new();
+                let encoder = image::codecs::png::PngEncoder::new_with_quality(
+                    &mut png_data,
+                    image::codecs::png::CompressionType::Fast,
+                    image::codecs::png::FilterType::Adaptive,
+                );
 
-            encoder
-                .write_image(&rgba_data, width, height, image::ExtendedColorType::Rgba8)
-                .map_err(|e| Error::ClipboardError(format!("failed to encode PNG: {e}")))?;
+                encoder
+                    .write_image(&rgba_data, width, height, image::ExtendedColorType::Rgba8)
+                    .map_err(|e| Error::ClipboardError(format!("failed to encode PNG: {e}")))?;
 
-            return Ok(Some(ClipboardContent::Image {
-                data: png_data,
-                width,
-                height,
-            }));
+                tracing::trace!("Clipboard: read image {}x{}", width, height);
+                return Ok(Some(ClipboardContent::Image {
+                    data: png_data,
+                    width,
+                    height,
+                }));
+            }
+            Err(e) => {
+                tracing::debug!("Clipboard: failed to read image: {}", e);
+            }
         }
 
+        tracing::trace!("Clipboard: no text or image content found");
         Ok(None)
     }
 
@@ -141,6 +156,117 @@ impl ClipboardAccess for NativeClipboard {
     fn content_hash(&mut self) -> u64 {
         self.read().ok().flatten().map_or(0, |c| c.hash())
     }
+}
+
+impl NativeClipboard {
+    /// Verify clipboard is accessible (for early failure detection).
+    ///
+    /// This attempts to read from the clipboard to verify access is working.
+    /// Use this at startup to detect platform-specific clipboard access issues early.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if clipboard cannot be accessed.
+    pub fn verify_access(&mut self) -> Result<()> {
+        // Try to read - we don't care about the content, just that we CAN read
+        match self.clipboard.get_text() {
+            Ok(_) => {
+                tracing::trace!("Clipboard: access verified (text)");
+                Ok(())
+            }
+            Err(text_err) => {
+                // Also try image in case there's no text but image access works
+                match self.clipboard.get_image() {
+                    Ok(_) => {
+                        tracing::trace!("Clipboard: access verified (image)");
+                        Ok(())
+                    }
+                    Err(image_err) => {
+                        let msg = format!(
+                            "Cannot access clipboard (text: {}, image: {}). \
+                             Check display server connection.",
+                            text_err, image_err
+                        );
+                        tracing::warn!("Clipboard: {}", msg);
+                        Err(Error::ClipboardError(msg))
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Diagnose clipboard accessibility and return diagnostic info.
+///
+/// This function checks the environment and clipboard access to help debug issues.
+/// Returns a human-readable string describing the clipboard status.
+#[must_use]
+pub fn diagnose_clipboard() -> String {
+    let mut info = Vec::new();
+
+    // Platform-specific environment checks
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(display) = std::env::var("WAYLAND_DISPLAY") {
+            info.push(format!("Wayland session detected (WAYLAND_DISPLAY={})", display));
+        }
+        if let Ok(display) = std::env::var("DISPLAY") {
+            info.push(format!("X11 display available (DISPLAY={})", display));
+        }
+        if std::env::var("WAYLAND_DISPLAY").is_err() && std::env::var("DISPLAY").is_err() {
+            info.push("WARNING: No display server detected (DISPLAY and WAYLAND_DISPLAY not set)".to_string());
+        }
+        if let Ok(session_type) = std::env::var("XDG_SESSION_TYPE") {
+            info.push(format!("Session type: {}", session_type));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        info.push("macOS clipboard (NSPasteboard)".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        info.push("Windows clipboard (Win32 API)".to_string());
+    }
+
+    // Try to access clipboard
+    match Clipboard::new() {
+        Ok(mut cb) => {
+            info.push("Clipboard initialized successfully".to_string());
+
+            match cb.get_text() {
+                Ok(text) => {
+                    if text.is_empty() {
+                        info.push("Text clipboard: accessible (empty)".to_string());
+                    } else {
+                        info.push(format!("Text clipboard: accessible ({} bytes)", text.len()));
+                    }
+                }
+                Err(e) => {
+                    info.push(format!("Text clipboard error: {e}"));
+                }
+            }
+
+            match cb.get_image() {
+                Ok(img) => {
+                    info.push(format!(
+                        "Image clipboard: accessible ({}x{})",
+                        img.width, img.height
+                    ));
+                }
+                Err(e) => {
+                    info.push(format!("Image clipboard: {e}"));
+                }
+            }
+        }
+        Err(e) => {
+            info.push(format!("ERROR: Cannot initialize clipboard: {e}"));
+        }
+    }
+
+    info.join("\n")
 }
 
 /// Create a platform-appropriate clipboard accessor.

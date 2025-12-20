@@ -37,7 +37,7 @@ pub mod access;
 pub mod session;
 pub mod watcher;
 
-pub use access::{create_clipboard, ClipboardAccess, NativeClipboard};
+pub use access::{create_clipboard, diagnose_clipboard, ClipboardAccess, NativeClipboard};
 pub use session::{
     ClipboardReceiveSession, ClipboardShareSession, ClipboardSyncSession, SyncEvent,
     SyncSessionRunner, SyncStats,
