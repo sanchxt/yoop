@@ -77,13 +77,11 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
     }
 
     let accepted = if !args.batch && !args.json && !args.quiet {
-        // Start keep-alive to prevent connection timeout while user reads prompt
         session.start_keep_alive()?;
 
         print!("  Accept transfer? [Y/n] ");
         io::stdout().flush()?;
 
-        // Use async stdin to not block the tokio runtime (allows keep-alive to run)
         let mut input = String::new();
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin);

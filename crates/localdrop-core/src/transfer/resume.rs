@@ -47,7 +47,6 @@ impl ResumeManager {
     ///
     /// Returns an error if the directory cannot be created.
     pub async fn with_dir(resume_dir: PathBuf) -> Result<Self> {
-        // Ensure the directory exists
         fs::create_dir_all(&resume_dir).await.map_err(|e| {
             Error::Io(std::io::Error::other(format!(
                 "Failed to create resume directory: {e}"
@@ -60,7 +59,7 @@ impl ResumeManager {
     /// Get the default platform-specific resume directory.
     fn default_resume_dir() -> PathBuf {
         let data_dir = directories::ProjectDirs::from("com", "localdrop", "LocalDrop").map_or_else(
-            || PathBuf::from(".localdrop"), // Fallback to current directory
+            || PathBuf::from(".localdrop"),
             |dirs| dirs.data_dir().to_path_buf(),
         );
 
@@ -81,7 +80,6 @@ impl ResumeManager {
     pub async fn save(&self, state: &ResumeState) -> Result<()> {
         let path = self.resume_file_path(&state.transfer_id);
 
-        // Serialize to JSON
         let json = serde_json::to_string_pretty(state).map_err(|e| {
             Error::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
@@ -89,7 +87,6 @@ impl ResumeManager {
             ))
         })?;
 
-        // Write atomically by writing to temp file first
         let temp_path = path.with_extension("tmp");
 
         let mut file = fs::File::create(&temp_path).await?;
@@ -97,7 +94,6 @@ impl ResumeManager {
         file.sync_all().await?;
         drop(file);
 
-        // Rename to final path (atomic on most filesystems)
         fs::rename(&temp_path, &path).await?;
 
         tracing::debug!(
@@ -159,16 +155,13 @@ impl ResumeManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            // Skip non-resume files
             if path.extension().is_none_or(|ext| ext != "localdrop-resume") {
-                // Check if filename ends with the extension (since it includes the dot)
                 let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 if !filename.ends_with(RESUME_FILE_EXTENSION) {
                     continue;
                 }
             }
 
-            // Try to load and check the code
             if let Ok(state) = self.load_from_path(&path).await {
                 if state.code == code {
                     return Ok(Some(state));
@@ -233,13 +226,11 @@ impl ResumeManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            // Skip non-resume files
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !filename.ends_with(RESUME_FILE_EXTENSION) {
                 continue;
             }
 
-            // Try to load and check the age
             if let Ok(state) = self.load_from_path(&path).await {
                 if state.updated_at < cutoff {
                     if let Err(e) = fs::remove_file(&path).await {
@@ -279,19 +270,16 @@ impl ResumeManager {
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
 
-            // Skip non-resume files
             let filename = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if !filename.ends_with(RESUME_FILE_EXTENSION) {
                 continue;
             }
 
-            // Try to load
             if let Ok(state) = self.load_from_path(&path).await {
                 states.push(state);
             }
         }
 
-        // Sort by updated_at descending (most recent first)
         states.sort_by(|a, b| b.updated_at.cmp(&a.updated_at));
 
         Ok(states)
@@ -342,10 +330,8 @@ mod tests {
         let state = create_test_state("ABC-123");
         let transfer_id = state.transfer_id;
 
-        // Save
         manager.save(&state).await.expect("save state");
 
-        // Load
         let loaded = manager
             .load(&transfer_id)
             .await
@@ -364,14 +350,12 @@ mod tests {
             .await
             .expect("create manager");
 
-        // Save multiple states
         let state1 = create_test_state("ABC-123");
         let state2 = create_test_state("XYZ-789");
 
         manager.save(&state1).await.expect("save state1");
         manager.save(&state2).await.expect("save state2");
 
-        // Find by code
         let found = manager
             .find_by_code("XYZ-789")
             .await
@@ -380,7 +364,6 @@ mod tests {
 
         assert_eq!(found.code, "XYZ-789");
 
-        // Should not find non-existent code
         let not_found = manager
             .find_by_code("NOT-EXIST")
             .await
@@ -399,16 +382,12 @@ mod tests {
         let state = create_test_state("ABC-123");
         let transfer_id = state.transfer_id;
 
-        // Save
         manager.save(&state).await.expect("save state");
 
-        // Verify it exists
         assert!(manager.load(&transfer_id).await.expect("load").is_some());
 
-        // Delete
         manager.delete(&transfer_id).await.expect("delete state");
 
-        // Verify it's gone
         assert!(manager.load(&transfer_id).await.expect("load").is_none());
     }
 
@@ -419,14 +398,12 @@ mod tests {
             .await
             .expect("create manager");
 
-        // Save multiple states
         let state1 = create_test_state("ABC-123");
         let state2 = create_test_state("XYZ-789");
 
         manager.save(&state1).await.expect("save state1");
         manager.save(&state2).await.expect("save state2");
 
-        // List all
         let all_states = manager.list().await.expect("list states");
 
         assert_eq!(all_states.len(), 2);

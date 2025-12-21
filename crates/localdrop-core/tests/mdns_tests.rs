@@ -32,35 +32,28 @@ fn test_mdns_properties_to_txt_properties() {
 
     let txt = props.to_txt_properties();
 
-    // Should have 6 properties
     assert_eq!(txt.len(), 6);
 
-    // Verify code is present
     let code_prop = txt.iter().find(|(k, _)| *k == "code");
     assert!(code_prop.is_some());
     assert_eq!(code_prop.unwrap().1, "TEST-123");
 
-    // Verify device_name is present
     let name_prop = txt.iter().find(|(k, _)| *k == "device_name");
     assert!(name_prop.is_some());
     assert_eq!(name_prop.unwrap().1, "TestDevice");
 
-    // Verify device_id is present
     let id_prop = txt.iter().find(|(k, _)| *k == "device_id");
     assert!(id_prop.is_some());
     assert_eq!(id_prop.unwrap().1, Uuid::nil().to_string());
 
-    // Verify file_count is present
     let count_prop = txt.iter().find(|(k, _)| *k == "file_count");
     assert!(count_prop.is_some());
     assert_eq!(count_prop.unwrap().1, "5");
 
-    // Verify total_size is present
     let size_prop = txt.iter().find(|(k, _)| *k == "total_size");
     assert!(size_prop.is_some());
     assert_eq!(size_prop.unwrap().1, "1024000");
 
-    // Verify version is present
     let version_prop = txt.iter().find(|(k, _)| *k == "version");
     assert!(version_prop.is_some());
     assert_eq!(version_prop.unwrap().1, "1.0");
@@ -69,7 +62,6 @@ fn test_mdns_properties_to_txt_properties() {
 /// Test the mDNS service type format.
 #[test]
 fn test_mdns_service_type_format() {
-    // Service type should follow DNS-SD naming conventions
     assert!(SERVICE_TYPE.starts_with("_localdrop"));
     assert!(SERVICE_TYPE.contains("._tcp"));
     assert!(SERVICE_TYPE.ends_with(".local."));
@@ -84,8 +76,6 @@ fn test_mdns_service_type_format() {
 fn test_mdns_broadcaster_creation() {
     let result = MdnsBroadcaster::new();
 
-    // Should succeed on most systems with mDNS support
-    // May fail in restricted environments (CI, containers)
     if result.is_err() {
         eprintln!(
             "mDNS broadcaster creation failed (may be expected in CI): {:?}",
@@ -115,18 +105,14 @@ async fn test_mdns_service_registration_lifecycle() {
         protocol_version: "1.0".to_string(),
     };
 
-    // Register service
     let result = broadcaster.register(props).await;
     assert!(result.is_ok(), "Registration should succeed: {result:?}");
 
-    // Give it a moment to propagate
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    // Unregister service
     let result = broadcaster.unregister().await;
     assert!(result.is_ok(), "Unregistration should succeed: {result:?}");
 
-    // Shutdown
     let result = broadcaster.shutdown();
     assert!(result.is_ok(), "Shutdown should succeed: {result:?}");
 }
@@ -140,7 +126,6 @@ async fn test_mdns_service_registration_lifecycle() {
 fn test_mdns_listener_creation() {
     let result = MdnsListener::new();
 
-    // Should succeed on most systems with mDNS support
     if result.is_err() {
         eprintln!(
             "mDNS listener creation failed (may be expected in CI): {:?}",
@@ -160,14 +145,10 @@ async fn test_mdns_listener_scan() {
         }
     };
 
-    // Scan for a short duration - should return empty (no services registered)
     let shares = listener.scan(Duration::from_millis(200)).await;
 
-    // May find real network services or be empty
-    // This test mainly verifies the scan doesn't crash
     eprintln!("Found {} shares during scan", shares.len());
 
-    // Cleanup
     let _ = listener.shutdown();
 }
 
@@ -182,13 +163,11 @@ async fn test_mdns_listener_find_timeout() {
         }
     };
 
-    // Try to find a non-existent code
     let code = CodeGenerator::new().generate().expect("generate code");
     let result = listener.find(&code, Duration::from_millis(200)).await;
 
     assert!(result.is_err(), "Should timeout for non-existent code");
 
-    // Cleanup
     let _ = listener.shutdown();
 }
 
@@ -226,7 +205,6 @@ async fn test_hybrid_broadcaster_lifecycle() {
         2048,
     );
 
-    // Start broadcasting
     broadcaster
         .start(packet, Duration::from_millis(100))
         .await
@@ -234,14 +212,11 @@ async fn test_hybrid_broadcaster_lifecycle() {
 
     assert!(broadcaster.is_broadcasting().await);
 
-    // Let it broadcast a few times
     tokio::time::sleep(Duration::from_millis(250)).await;
 
-    // Stop broadcasting
     broadcaster.stop().await;
     assert!(!broadcaster.is_broadcasting().await);
 
-    // Shutdown
     let result = broadcaster.shutdown();
     assert!(result.is_ok());
 }
@@ -252,7 +227,6 @@ async fn test_hybrid_listener_find_timeout() {
     let port = 53200 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
 
-    // Try to find a non-existent code
     let code = CodeGenerator::new().generate().expect("generate code");
     let result = listener.find(&code, Duration::from_millis(200)).await;
 
@@ -265,7 +239,6 @@ async fn test_hybrid_listener_scan() {
     let port = 53300 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
 
-    // Scan should work without crashing (may find services or not)
     let shares = listener.scan(Duration::from_millis(100)).await;
     eprintln!("Hybrid scan found {} shares", shares.len());
 }
@@ -276,7 +249,6 @@ async fn test_hybrid_listener_sequential_udp_first() {
     let port = 53400 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
 
-    // Try to find a non-existent code with UDP preference
     let code = CodeGenerator::new().generate().expect("generate code");
     let result = listener
         .find_sequential(&code, Duration::from_millis(200), false)
@@ -291,7 +263,6 @@ async fn test_hybrid_listener_sequential_mdns_first() {
     let port = 53500 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
 
-    // Try to find a non-existent code with mDNS preference
     let code = CodeGenerator::new().generate().expect("generate code");
     let result = listener
         .find_sequential(&code, Duration::from_millis(200), true)
@@ -309,7 +280,6 @@ async fn test_hybrid_listener_sequential_mdns_first() {
 #[tokio::test]
 #[ignore = "Requires real mDNS network support"]
 async fn test_mdns_registration_discovery_roundtrip() {
-    // Create broadcaster
     let broadcaster = MdnsBroadcaster::new().expect("create broadcaster");
 
     let code = "E2E-TEST";
@@ -325,24 +295,19 @@ async fn test_mdns_registration_discovery_roundtrip() {
         protocol_version: "1.0".to_string(),
     };
 
-    // Register service
     broadcaster.register(props).await.expect("register");
 
-    // Wait for mDNS to propagate
     tokio::time::sleep(Duration::from_millis(500)).await;
 
-    // Create listener and try to find the service
     let listener = MdnsListener::new().expect("create listener");
     let share_code = localdrop_core::code::ShareCode::parse(code).expect("parse code");
 
     let result = listener.find(&share_code, Duration::from_secs(5)).await;
 
-    // Cleanup
     broadcaster.unregister().await.expect("unregister");
     broadcaster.shutdown().expect("shutdown broadcaster");
     listener.shutdown().expect("shutdown listener");
 
-    // Verify discovery
     let discovered = result.expect("should find service");
     assert_eq!(discovered.code, code);
     assert_eq!(discovered.device_name, "E2ETestDevice");
@@ -359,7 +324,6 @@ async fn test_mdns_registration_discovery_roundtrip() {
 async fn test_hybrid_discovery_roundtrip() {
     let port = 53600;
 
-    // Create broadcaster
     let broadcaster = HybridBroadcaster::new(port)
         .await
         .expect("create broadcaster");
@@ -376,25 +340,20 @@ async fn test_hybrid_discovery_roundtrip() {
         1024,
     );
 
-    // Start broadcasting
     broadcaster
         .start(packet.clone(), Duration::from_millis(100))
         .await
         .expect("start");
 
-    // Wait for broadcasts to start
     tokio::time::sleep(Duration::from_millis(200)).await;
 
-    // Create listener and find
     let listener = HybridListener::new(port).await.expect("create listener");
     let result = listener.find(&code, Duration::from_secs(5)).await;
 
-    // Cleanup
     broadcaster.stop().await;
     broadcaster.shutdown().expect("shutdown broadcaster");
     listener.shutdown().expect("shutdown listener");
 
-    // Verify discovery
     let discovered = result.expect("should find service");
     assert_eq!(discovered.packet.code, code.to_string());
     assert_eq!(discovered.packet.device_name, "HybridE2ETest");

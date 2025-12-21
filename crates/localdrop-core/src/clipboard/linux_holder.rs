@@ -65,15 +65,12 @@ pub fn hold_image_in_background(
         display_server
     );
 
-    // Get the current executable path
     let exe = std::env::current_exe().map_err(|e| {
         Error::ClipboardError(format!("cannot find current executable for holder: {}", e))
     })?;
 
     tracing::debug!("Clipboard holder executable: {:?}", exe);
 
-    // Spawn a new process with the internal command
-    // Explicitly pass display environment variables to ensure clipboard access
     let mut cmd = Command::new(&exe);
     cmd.arg("internal-clipboard-hold")
         .arg("--content-type")
@@ -82,9 +79,8 @@ pub fn hold_image_in_background(
         .arg(timeout.as_secs().to_string())
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::inherit()); // Keep stderr for debugging
+        .stderr(Stdio::inherit());
 
-    // Ensure Wayland/X11 display variables are passed to child
     if let Ok(val) = std::env::var("WAYLAND_DISPLAY") {
         cmd.env("WAYLAND_DISPLAY", val);
     }
@@ -104,20 +100,16 @@ pub fn hold_image_in_background(
         child.id()
     );
 
-    // Write PNG data to child's stdin
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(&png_data).map_err(|e| {
             Error::ClipboardError(format!("failed to write image data to holder: {}", e))
         })?;
-        // stdin is dropped here, signaling EOF to the child
     } else {
         return Err(Error::ClipboardError(
             "failed to get stdin pipe for clipboard holder".to_string(),
         ));
     }
 
-    // Wait for child to initialize and set clipboard
-    // This gives the holder process time to read stdin and set the clipboard
     std::thread::sleep(Duration::from_millis(500));
 
     tracing::debug!(
@@ -126,8 +118,6 @@ pub fn hold_image_in_background(
         height
     );
 
-    // Child continues running in background - we don't wait for it
-    // The child will exit after timeout or when clipboard is claimed
     Ok(())
 }
 
@@ -167,7 +157,6 @@ pub fn hold_text_in_background(text: String, timeout: Duration) -> Result<()> {
         .stdout(Stdio::null())
         .stderr(Stdio::inherit());
 
-    // Ensure Wayland/X11 display variables are passed to child
     if let Ok(val) = std::env::var("WAYLAND_DISPLAY") {
         cmd.env("WAYLAND_DISPLAY", val);
     }
@@ -197,7 +186,6 @@ pub fn hold_text_in_background(text: String, timeout: Duration) -> Result<()> {
         ));
     }
 
-    // Wait briefly for child to initialize
     std::thread::sleep(Duration::from_millis(300));
 
     tracing::debug!("Clipboard holder process started for text");
@@ -241,7 +229,6 @@ mod tests {
 
     #[test]
     fn test_display_server_detection() {
-        // Just verify it doesn't panic
         let server = DisplayServer::detect();
         println!("Detected display server: {:?}", server);
     }

@@ -99,7 +99,7 @@ impl ClipboardShareSession {
             &device_name,
             device_id,
             local_addr.port(),
-            1, // file_count = 1 for clipboard
+            1,
             content.size(),
         );
 
@@ -238,7 +238,6 @@ impl ClipboardShareSession {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
-        // Send metadata
         let meta = ClipboardMetaPayload {
             content_type: self.metadata.content_type,
             size: self.metadata.size,
@@ -248,7 +247,6 @@ impl ClipboardShareSession {
         let meta_payload = protocol::encode_payload(&meta)?;
         protocol::write_frame(stream, MessageType::ClipboardMeta, &meta_payload).await?;
 
-        // Wait for acceptance (may receive Ping/Pong while waiting)
         loop {
             let (header, payload) = protocol::read_frame(stream).await?;
 
@@ -272,10 +270,8 @@ impl ClipboardShareSession {
             }
         }
 
-        // Send content data
         let data = self.content.to_bytes();
 
-        // For clipboard, we encode: width(4) | height(4) | data
         let mut payload = Vec::with_capacity(8 + data.len());
         let (width, height) = match &self.content {
             ClipboardContent::Image { width, height, .. } => (*width, *height),
@@ -287,7 +283,6 @@ impl ClipboardShareSession {
 
         protocol::write_frame(stream, MessageType::ClipboardData, &payload).await?;
 
-        // Wait for final ack
         let (header, payload) = protocol::read_frame(stream).await?;
         if header.message_type != MessageType::ClipboardAck {
             return Err(Error::UnexpectedMessage {
@@ -301,7 +296,6 @@ impl ClipboardShareSession {
             return Err(Error::TransferCancelled);
         }
 
-        // Send transfer complete
         protocol::write_frame(stream, MessageType::TransferComplete, &[]).await?;
 
         Ok(())
@@ -499,7 +493,6 @@ impl ClipboardReceiveSession {
             .take()
             .ok_or_else(|| Error::Internal("no TLS stream".to_string()))?;
 
-        // Send acceptance
         let ack = ClipboardAckPayload {
             success: true,
             error: None,
@@ -507,7 +500,6 @@ impl ClipboardReceiveSession {
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut stream, MessageType::ClipboardAck, &ack_payload).await?;
 
-        // Receive content
         let (header, data) = protocol::read_frame(&mut stream).await?;
         if header.message_type != MessageType::ClipboardData {
             return Err(Error::UnexpectedMessage {
@@ -516,7 +508,6 @@ impl ClipboardReceiveSession {
             });
         }
 
-        // Parse: width(4) | height(4) | data
         if data.len() < 8 {
             return Err(Error::ProtocolError("clipboard data too short".to_string()));
         }
@@ -532,7 +523,6 @@ impl ClipboardReceiveSession {
             Some(height),
         )?;
 
-        // Verify checksum
         if content.hash() != self.metadata.checksum {
             let ack = ClipboardAckPayload {
                 success: false,
@@ -546,7 +536,6 @@ impl ClipboardReceiveSession {
             });
         }
 
-        // Send success ack
         let ack = ClipboardAckPayload {
             success: true,
             error: None,
@@ -554,7 +543,6 @@ impl ClipboardReceiveSession {
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut stream, MessageType::ClipboardAck, &ack_payload).await?;
 
-        // Wait for transfer complete
         let (header, _) = protocol::read_frame(&mut stream).await?;
         if header.message_type != MessageType::TransferComplete {
             return Err(Error::UnexpectedMessage {
@@ -576,21 +564,11 @@ impl ClipboardReceiveSession {
         let content_type = content.content_type();
         let mut clipboard = create_clipboard()?;
 
-        // Use write_and_wait to ensure clipboard manager claims the content
-        // before this function returns. This is critical on Wayland where
-        // clipboard content is "hosted" by the application.
         clipboard.write_and_wait(&content, Duration::from_secs(5))?;
 
-        // On Linux with images, the background holder process owns the clipboard.
-        // We cannot reliably verify by reading back because:
-        // 1. The holder uses wait() which blocks until clipboard changes
-        // 2. Reading the clipboard from this process may not see the holder's content
-        // 3. Clipboard managers may claim but not properly persist images
-        // Trust the holder process - if write_and_wait succeeded, the image is available.
         #[cfg(target_os = "linux")]
         {
             if matches!(&content, ClipboardContent::Image { .. }) {
-                // Wait for holder to initialize and set the clipboard
                 tokio::time::sleep(Duration::from_millis(600)).await;
                 tracing::info!(
                     "Image set via background holder process - ready to paste"
@@ -599,18 +577,12 @@ impl ClipboardReceiveSession {
             }
         }
 
-        // Wait for the spawned clipboard holder to initialize and set content
-        // The holder process needs time to: read stdin, decode image, and set clipboard
         #[cfg(target_os = "linux")]
         tokio::time::sleep(Duration::from_millis(600)).await;
 
-        // Verify the write succeeded by reading back with content type hint
-        // This ensures we read image first when we wrote an image
         let verification = clipboard.read_expected(Some(content_type))?;
 
         if let Some(read_content) = verification {
-            // For images, compare dimensions instead of hash because
-            // re-encoding (PNG -> RGBA -> PNG) can change the hash
             match (&content, &read_content) {
                 (
                     ClipboardContent::Image {
@@ -644,7 +616,6 @@ impl ClipboardReceiveSession {
                     );
                 }
                 (ClipboardContent::Text(_), ClipboardContent::Text(_)) => {
-                    // For text, hash comparison is reliable
                     if read_content.hash() != content.hash() {
                         tracing::warn!(
                             "Clipboard verification failed: hash mismatch (expected {}, got {})",
@@ -658,8 +629,6 @@ impl ClipboardReceiveSession {
                     tracing::debug!("Clipboard text verified successfully");
                 }
                 _ => {
-                    // Content type changed during round-trip - log warning but don't fail
-                    // This can happen on some platforms
                     tracing::warn!(
                         "Clipboard content type changed during verification \
                          (expected {:?}, got {:?})",
@@ -669,9 +638,6 @@ impl ClipboardReceiveSession {
                 }
             }
         } else {
-            // On Linux with the background holder approach, immediate verification
-            // might fail because the child process is handling the clipboard.
-            // Give it some extra time on Linux before failing.
             #[cfg(target_os = "linux")]
             {
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -680,8 +646,6 @@ impl ClipboardReceiveSession {
                     tracing::warn!(
                         "Clipboard verification failed: clipboard is empty after write (retry)"
                     );
-                    // On Linux, the background holder might be working even if we can't verify
-                    // Log warning but don't fail
                     tracing::info!(
                         "Clipboard content may be available via background holder process"
                     );
@@ -869,13 +833,12 @@ impl ClipboardSyncSession {
             &device_name,
             device_id,
             local_addr.port(),
-            0, // No files for sync
+            0,
             0,
         );
 
         broadcaster.start(packet, config.broadcast_interval).await?;
 
-        // Wait for connection
         let (stream, peer_addr) = listener.accept().await?;
         broadcaster.stop().await;
 
@@ -891,7 +854,6 @@ impl ClipboardSyncSession {
             .await
             .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
 
-        // Handshake
         let hello = HelloPayload {
             device_name: device_name.clone(),
             protocol_version: "1.0".to_string(),
@@ -908,7 +870,6 @@ impl ClipboardSyncSession {
         }
         let peer_hello: HelloPayload = protocol::decode_payload(&payload)?;
 
-        // Code verification
         let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
         if header.message_type != MessageType::CodeVerify {
             return Err(Error::UnexpectedMessage {
@@ -998,7 +959,6 @@ impl ClipboardSyncSession {
 
         let session_key = crypto::derive_session_key(code.as_str());
 
-        // Handshake
         let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
         if header.message_type != MessageType::Hello {
             return Err(Error::UnexpectedMessage {
@@ -1015,7 +975,6 @@ impl ClipboardSyncSession {
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
 
-        // Code verification
         let hmac = crypto::hmac_sha256(&session_key, code.as_str().as_bytes());
         let verify = CodeVerifyPayload {
             code_hmac: hmac.to_vec(),
@@ -1139,7 +1098,7 @@ impl AsyncWrite for TlsStreamKind {
 
 /// Cached clipboard content with metadata
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields reserved for future cache expiration/stats
+#[allow(dead_code)]
 struct CachedClipboardContent {
     content: ClipboardContent,
     timestamp: chrono::DateTime<chrono::Utc>,
@@ -1176,21 +1135,16 @@ impl SyncSessionRunner {
         let mut stats = SyncStats::default();
         let started_at = Instant::now();
 
-        // Create clipboard watcher
         let watcher = ClipboardWatcher::new();
         let mut clipboard = create_clipboard()?;
 
-        // Initialize watcher with current clipboard hash to prevent false positives
         let initial_hash = clipboard.content_hash();
         watcher.set_last_hash(initial_hash);
 
         let (mut change_rx, watcher_handle) = watcher.start(clipboard);
 
-        // Shared content cache: outbound task stores detected content here,
-        // inbound task reads from here when responding to ClipboardRequest
         let content_cache: ContentCache = Arc::new(tokio::sync::Mutex::new(None));
 
-        // Take ownership of the stream and wrap in Arc<Mutex> for sharing
         let tls_stream = Arc::new(tokio::sync::Mutex::new(self.tls_stream));
 
         let last_local_hash = self.last_local_hash;
@@ -1199,7 +1153,6 @@ impl SyncSessionRunner {
         let tls_stream_clone = Arc::clone(&tls_stream);
         let event_tx_clone = event_tx.clone();
 
-        // Task to handle outbound clipboard changes
         let outbound_task = {
             let last_remote = Arc::clone(&last_remote_hash);
             let last_local = Arc::clone(&last_local_hash);
@@ -1207,14 +1160,12 @@ impl SyncSessionRunner {
             let cache = Arc::clone(&content_cache);
             tokio::spawn(async move {
                 while let Some(change) = change_rx.recv().await {
-                    // Skip if this is content we just received
                     if change.hash == last_remote.load(Ordering::SeqCst) {
                         continue;
                     }
 
                     last_local.store(change.hash, Ordering::SeqCst);
 
-                    // Cache the content for when peer requests it via ClipboardRequest
                     {
                         let mut cache_guard = cache.lock().await;
                         *cache_guard = Some((
@@ -1227,7 +1178,6 @@ impl SyncSessionRunner {
                         ));
                     }
 
-                    // Send ClipboardChanged notification
                     let notification = ClipboardChangedPayload {
                         content_type: change.content.content_type(),
                         size: change.content.size(),
@@ -1254,7 +1204,6 @@ impl SyncSessionRunner {
             })
         };
 
-        // Task to handle inbound messages
         let inbound_task = {
             let last_remote = Arc::clone(&last_remote_hash);
             let stream = Arc::clone(&tls_stream_clone);
@@ -1273,7 +1222,6 @@ impl SyncSessionRunner {
                             let changed: ClipboardChangedPayload =
                                 protocol::decode_payload(&payload)?;
 
-                            // Request the content
                             protocol::write_frame(
                                 &mut *stream.lock().await,
                                 MessageType::ClipboardRequest,
@@ -1281,7 +1229,6 @@ impl SyncSessionRunner {
                             )
                             .await?;
 
-                            // Wait for ClipboardData in a loop, handling other messages appropriately
                             let content: Option<ClipboardContent> = loop {
                                 let (header, data) = {
                                     let mut reader = stream.lock().await;
@@ -1290,7 +1237,6 @@ impl SyncSessionRunner {
 
                                 match header.message_type {
                                     MessageType::ClipboardData => {
-                                        // Parse content and break out of inner loop
                                         if data.len() < 8 {
                                             break None;
                                         }
@@ -1310,37 +1256,26 @@ impl SyncSessionRunner {
                                         .ok();
                                     }
                                     MessageType::Ping => {
-                                        // Handle Ping while waiting for ClipboardData
                                         protocol::write_frame(
                                             &mut *stream.lock().await,
                                             MessageType::Pong,
                                             &[],
                                         )
                                         .await?;
-                                        // Continue waiting for ClipboardData
                                     }
                                     MessageType::TransferCancel => {
-                                        // Graceful exit
                                         return Ok(());
                                     }
                                     _ => {
-                                        // Ignore other messages (ClipboardAck, Pong, etc.)
-                                        // and continue waiting for ClipboardData
                                     }
                                 }
                             };
 
-                            // Apply content if successfully received
                             if let Some(content) = content {
-                                // Write to local clipboard using write_and_wait
-                                // This ensures the content persists on Wayland
                                 match clipboard
                                     .write_and_wait(&content, Duration::from_secs(2))
                                 {
                                     Ok(()) => {
-                                        // On Linux with images, wait for holder to initialize
-                                        // The holder process uses wait() which keeps it alive
-                                        // until the clipboard is overwritten
                                         #[cfg(target_os = "linux")]
                                         if matches!(&content, ClipboardContent::Image { .. }) {
                                             tokio::time::sleep(Duration::from_millis(500)).await;
@@ -1349,7 +1284,6 @@ impl SyncSessionRunner {
                                             );
                                         }
 
-                                        // Only update hash AFTER successful write
                                         last_remote.store(changed.checksum, Ordering::SeqCst);
                                         let _ = event_tx
                                             .send(SyncEvent::Received {
@@ -1364,7 +1298,6 @@ impl SyncSessionRunner {
                                 }
                             }
 
-                            // Send ack
                             let ack = ClipboardAckPayload {
                                 success: true,
                                 error: None,
@@ -1378,8 +1311,6 @@ impl SyncSessionRunner {
                             .await?;
                         }
                         MessageType::ClipboardRequest => {
-                            // Peer is requesting our current content
-                            // Use clone() instead of take() to preserve cache for potential retries
                             let cached_content = {
                                 let cache_guard = cache.lock().await;
                                 cache_guard.as_ref().map(|(_, c)| c.content.clone())
@@ -1407,7 +1338,6 @@ impl SyncSessionRunner {
                                 )
                                 .await?;
                             } else {
-                                // ALWAYS respond - send error ack instead of leaving peer hanging
                                 tracing::warn!("ClipboardRequest but no content available");
                                 let ack = ClipboardAckPayload {
                                     success: false,
@@ -1433,7 +1363,6 @@ impl SyncSessionRunner {
                         MessageType::TransferCancel => {
                             break;
                         }
-                        // ClipboardAck, Pong, and other messages are handled silently
                         _ => {}
                     }
                 }
@@ -1442,7 +1371,6 @@ impl SyncSessionRunner {
             })
         };
 
-        // Wait for shutdown or error
         tokio::select! {
             _ = shutdown_rx.recv() => {
                 tracing::debug!("Sync session shutdown requested");

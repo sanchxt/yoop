@@ -96,7 +96,6 @@ impl ClipboardAccess for NativeClipboard {
 
         match content {
             ClipboardContent::Text(text) => {
-                // Text clipboard works reliably with arboard's wait_until
                 self.clipboard
                     .set()
                     .wait_until(deadline)
@@ -105,9 +104,6 @@ impl ClipboardAccess for NativeClipboard {
                 tracing::debug!("Clipboard: text written and claimed by clipboard manager");
             }
             ClipboardContent::Image { data, width, height } => {
-                // Images need special handling on Linux, especially Wayland.
-                // arboard's wait_until() doesn't reliably persist images.
-                // Instead, we spawn a background process to hold the clipboard.
                 use super::linux_holder::DEFAULT_HOLDER_TIMEOUT;
 
                 let display_server = DisplayServer::detect();
@@ -118,10 +114,6 @@ impl ClipboardAccess for NativeClipboard {
                     display_server
                 );
 
-                // Use the background holder approach for image persistence.
-                // The holder runs for DEFAULT_HOLDER_TIMEOUT (5 minutes) to give
-                // the user time to paste the content. The `timeout` parameter here
-                // is for verification, not the holder lifetime.
                 hold_image_in_background(data.clone(), *width, *height, DEFAULT_HOLDER_TIMEOUT)?;
 
                 tracing::debug!("Clipboard: image written via background holder");
@@ -133,12 +125,10 @@ impl ClipboardAccess for NativeClipboard {
 
     #[cfg(not(target_os = "linux"))]
     fn write_and_wait(&mut self, content: &ClipboardContent, _timeout: Duration) -> Result<()> {
-        // On non-Linux platforms, just use regular write
         self.write(content)
     }
 
     fn read(&mut self) -> Result<Option<ClipboardContent>> {
-        // Try to read text first
         match self.clipboard.get_text() {
             Ok(text) if !text.is_empty() => {
                 tracing::trace!("Clipboard: read {} bytes of text", text.len());
@@ -149,23 +139,18 @@ impl ClipboardAccess for NativeClipboard {
             }
             Err(e) => {
                 tracing::debug!("Clipboard: failed to read text: {}", e);
-                // Continue to try image - text might just not be available
             }
         }
 
-        // Try to read image
         match self.clipboard.get_image() {
             Ok(image) => {
-                // Convert to PNG bytes
                 let width = u32::try_from(image.width)
                     .map_err(|_| Error::ClipboardError("image width too large".to_string()))?;
                 let height = u32::try_from(image.height)
                     .map_err(|_| Error::ClipboardError("image height too large".to_string()))?;
 
-                // arboard gives us RGBA bytes
                 let rgba_data = image.bytes.into_owned();
 
-                // Encode as PNG
                 let mut png_data = Vec::new();
                 let encoder = image::codecs::png::PngEncoder::new_with_quality(
                     &mut png_data,
@@ -205,14 +190,12 @@ impl ClipboardAccess for NativeClipboard {
                 width,
                 height,
             } => {
-                // Decode PNG to RGBA
                 let img = image::load_from_memory_with_format(data, image::ImageFormat::Png)
                     .map_err(|e| Error::ClipboardError(format!("failed to decode PNG: {e}")))?;
 
                 let rgba = img.to_rgba8();
                 let (w, h) = rgba.dimensions();
 
-                // Set image to clipboard
                 let image_data = arboard::ImageData {
                     width: w as usize,
                     height: h as usize,
@@ -223,7 +206,6 @@ impl ClipboardAccess for NativeClipboard {
                     .set_image(image_data)
                     .map_err(|e| Error::ClipboardError(format!("failed to set image: {e}")))?;
 
-                // Verify dimensions match (warn if different due to format conversion)
                 if w != *width || h != *height {
                     tracing::debug!(
                         "Image dimensions changed during conversion: {}x{} -> {}x{}",
@@ -249,15 +231,12 @@ impl ClipboardAccess for NativeClipboard {
     ) -> Result<Option<ClipboardContent>> {
         match expected {
             Some(ClipboardContentType::ImagePng) => {
-                // When expecting an image, try image first
                 if let Some(content) = self.try_read_image()? {
                     return Ok(Some(content));
                 }
-                // Fall back to text
                 self.try_read_text()
             }
             Some(ClipboardContentType::PlainText) | None => {
-                // Default behavior: text first, then image
                 self.read()
             }
         }
@@ -284,16 +263,13 @@ impl NativeClipboard {
     fn try_read_image(&mut self) -> Result<Option<ClipboardContent>> {
         match self.clipboard.get_image() {
             Ok(image) => {
-                // Convert to PNG bytes
                 let width = u32::try_from(image.width)
                     .map_err(|_| Error::ClipboardError("image width too large".to_string()))?;
                 let height = u32::try_from(image.height)
                     .map_err(|_| Error::ClipboardError("image height too large".to_string()))?;
 
-                // arboard gives us RGBA bytes
                 let rgba_data = image.bytes.into_owned();
 
-                // Encode as PNG
                 let mut png_data = Vec::new();
                 let encoder = image::codecs::png::PngEncoder::new_with_quality(
                     &mut png_data,
@@ -328,14 +304,12 @@ impl NativeClipboard {
     ///
     /// Returns an error if clipboard cannot be accessed.
     pub fn verify_access(&mut self) -> Result<()> {
-        // Try to read - we don't care about the content, just that we CAN read
         match self.clipboard.get_text() {
             Ok(_) => {
                 tracing::trace!("Clipboard: access verified (text)");
                 Ok(())
             }
             Err(text_err) => {
-                // Also try image in case there's no text but image access works
                 match self.clipboard.get_image() {
                     Ok(_) => {
                         tracing::trace!("Clipboard: access verified (image)");
@@ -364,7 +338,6 @@ impl NativeClipboard {
 pub fn diagnose_clipboard() -> String {
     let mut info = Vec::new();
 
-    // Platform-specific environment checks
     #[cfg(target_os = "linux")]
     {
         if let Ok(display) = std::env::var("WAYLAND_DISPLAY") {
@@ -391,7 +364,6 @@ pub fn diagnose_clipboard() -> String {
         info.push("Windows clipboard (Win32 API)".to_string());
     }
 
-    // Try to access clipboard
     match Clipboard::new() {
         Ok(mut cb) => {
             info.push("Clipboard initialized successfully".to_string());
@@ -442,12 +414,9 @@ pub fn create_clipboard() -> Result<Box<dyn ClipboardAccess>> {
 mod tests {
     use super::*;
 
-    // Note: These tests require a display server on Linux (X11/Wayland)
-    // They may be skipped in headless CI environments
 
     #[test]
     fn test_create_clipboard() {
-        // This test may fail in headless environments
         let result = create_clipboard();
         if result.is_err() {
             eprintln!("Skipping clipboard test (no display available)");
@@ -467,14 +436,12 @@ mod tests {
 
         let test_content = ClipboardContent::Text("LocalDrop test content".to_string());
 
-        // Write to clipboard
         let write_result = clipboard.write(&test_content);
         if write_result.is_err() {
             eprintln!("Skipping clipboard test (write failed)");
             return;
         }
 
-        // Read back
         let read_result = clipboard.read();
         if read_result.is_err() {
             eprintln!("Skipping clipboard test (read failed)");
@@ -501,7 +468,6 @@ mod tests {
         let hash1 = clipboard.content_hash();
         let hash2 = clipboard.content_hash();
 
-        // Hashes should be consistent for same content
         assert_eq!(hash1, hash2);
     }
 }

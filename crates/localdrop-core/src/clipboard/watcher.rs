@@ -97,14 +97,11 @@ impl ClipboardWatcher {
                         break;
                     }
                     () = tokio::time::sleep(poll_interval) => {
-                        // Read content FIRST, then compute hash from that content
-                        // This prevents race conditions where hash and content don't match
                         if let Ok(Some(content)) = clipboard.read() {
                             let current_hash = content.hash();
                             let stored_hash = last_hash.load(Ordering::SeqCst);
 
                             if current_hash != 0 && current_hash != stored_hash {
-                                // Content has changed - update hash AFTER we have the content
                                 last_hash.store(current_hash, Ordering::SeqCst);
 
                                 let change = ClipboardChange {
@@ -114,7 +111,6 @@ impl ClipboardWatcher {
                                 };
 
                                 if tx.send(change).await.is_err() {
-                                    // Receiver dropped, stop watching
                                     tracing::debug!("Clipboard change receiver dropped");
                                     break;
                                 }
@@ -226,12 +222,10 @@ mod tests {
 
         let (mut rx, handle) = watcher.start(Box::new(mock));
 
-        // Set some content
         {
             *content_ref.lock().unwrap() = Some(ClipboardContent::Text("Test content".to_string()));
         }
 
-        // Wait for change detection
         let result = tokio::time::timeout(Duration::from_millis(200), rx.recv()).await;
 
         assert!(result.is_ok());

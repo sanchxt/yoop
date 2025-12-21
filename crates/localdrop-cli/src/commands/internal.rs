@@ -25,7 +25,6 @@ use arboard::Clipboard;
 ///
 /// Returns an error if clipboard cannot be set.
 pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
-    // Read all data from stdin
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data)?;
 
@@ -39,10 +38,8 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
         content_type
     );
 
-    // Calculate deadline for waiting
     let deadline = Instant::now() + Duration::from_secs(timeout_secs);
 
-    // On Linux, we need to use the SetExtLinux trait for proper Wayland support
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;
@@ -53,9 +50,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
 
         match content_type {
             "image" => {
-                // Start a watchdog thread that will exit the process after the timeout.
-                // This is needed because wait() blocks indefinitely until clipboard changes,
-                // and we don't want orphaned holder processes.
                 let watchdog_timeout = timeout_secs;
                 let watchdog_active = Arc::new(AtomicBool::new(true));
                 let watchdog_flag = Arc::clone(&watchdog_active);
@@ -68,7 +62,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     }
                 });
 
-                // Decode PNG to RGBA
                 let img = image::load_from_memory(&data)
                     .map_err(|e| anyhow::anyhow!("Failed to decode image: {}", e))?;
 
@@ -86,12 +79,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     bytes: std::borrow::Cow::Owned(rgba.into_raw()),
                 };
 
-                // Use wait() instead of wait_until() for images.
-                // wait_until() returns immediately when a clipboard manager claims content,
-                // but the manager often doesn't properly persist images.
-                // wait() blocks until the clipboard is actually overwritten by another app,
-                // keeping the holder alive to serve paste requests.
-                // The watchdog thread ensures we don't block forever.
                 eprintln!("Clipboard holder: waiting for clipboard to be claimed (up to {} seconds)", watchdog_timeout);
                 clipboard
                     .set()
@@ -99,7 +86,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     .image(image_data)
                     .map_err(|e| anyhow::anyhow!("Failed to set image in holder: {}", e))?;
 
-                // Disable watchdog since wait() returned normally (clipboard was overwritten)
                 watchdog_active.store(false, Ordering::SeqCst);
                 eprintln!("Clipboard holder: clipboard was overwritten by another application");
             }
@@ -112,7 +98,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     text.len()
                 );
 
-                // Use wait_until() for text as well
                 clipboard
                     .set()
                     .wait_until(deadline)
@@ -127,7 +112,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
         }
     }
 
-    // Non-Linux platforms use simpler approach
     #[cfg(not(target_os = "linux"))]
     {
         let mut clipboard = Clipboard::new().map_err(|e| {
@@ -179,7 +163,6 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
             }
         }
 
-        // On non-Linux, just sleep to hold the clipboard
         eprintln!(
             "Clipboard holder: holding clipboard for up to {} seconds",
             timeout_secs

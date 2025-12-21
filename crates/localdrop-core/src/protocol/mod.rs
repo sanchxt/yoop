@@ -547,7 +547,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_pong_roundtrip() {
-        // Test Ping frame
         let mut buffer = Vec::new();
         write_frame(&mut buffer, MessageType::Ping, &[])
             .await
@@ -559,7 +558,6 @@ mod tests {
         assert_eq!(header.message_type, MessageType::Ping);
         assert!(payload.is_empty());
 
-        // Test Pong frame
         let mut buffer = Vec::new();
         write_frame(&mut buffer, MessageType::Pong, &[])
             .await
@@ -592,8 +590,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_frame_with_timeout_expires() {
-        // We need a stream that blocks forever, not one that returns EOF
-        // Use a never-ready stream to test timeout behavior
         struct NeverReadyReader;
 
         impl tokio::io::AsyncRead for NeverReadyReader {
@@ -612,7 +608,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             crate::error::Error::Timeout(secs) => {
-                assert_eq!(secs, 0); // 50ms rounds to 0 seconds
+                assert_eq!(secs, 0);
             }
             e => panic!("Expected Timeout error, got: {e:?}"),
         }
@@ -633,7 +629,6 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify the frame was written correctly
         let mut cursor = std::io::Cursor::new(buffer);
         let (header, read_payload) = read_frame(&mut cursor).await.expect("read frame");
         assert_eq!(header.message_type, MessageType::Pong);

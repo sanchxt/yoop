@@ -27,23 +27,18 @@ mod unix_tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let file_path = temp_dir.path().join("test_file.txt");
 
-        // Create a file
         std::fs::write(&file_path, "test content").expect("write file");
 
-        // Set specific permissions (rwxr-xr-x = 0o755)
         let perms = std::fs::Permissions::from_mode(0o755);
         std::fs::set_permissions(&file_path, perms).expect("set permissions");
 
-        // Get metadata
         let metadata = FileMetadata::from_path(&file_path, temp_dir.path()).expect("get metadata");
 
-        // Verify permissions were captured
         assert!(
             metadata.permissions.is_some(),
             "Unix permissions should be captured"
         );
 
-        // The captured mode includes file type bits, so mask them out
         let captured_mode = metadata.permissions.unwrap() & 0o7777;
         assert_eq!(captured_mode, 0o755, "Permissions should match what we set");
     }
@@ -54,13 +49,10 @@ mod unix_tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let file_path = temp_dir.path().join("test_file.txt");
 
-        // Create a file with default permissions
         std::fs::write(&file_path, "test content").expect("write file");
 
-        // Apply specific permissions (rw-r--r-- = 0o644)
         apply_permissions(&file_path, Some(0o644)).expect("apply permissions");
 
-        // Read back permissions
         let metadata = std::fs::metadata(&file_path).expect("get metadata");
         let mode = metadata.permissions().mode() & 0o7777;
 
@@ -73,13 +65,10 @@ mod unix_tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let file_path = temp_dir.path().join("script.sh");
 
-        // Create a script file
         std::fs::write(&file_path, "#!/bin/bash\necho hello").expect("write file");
 
-        // Make it executable (rwxr-xr-x = 0o755)
         apply_permissions(&file_path, Some(0o755)).expect("apply permissions");
 
-        // Verify it's executable
         let metadata = std::fs::metadata(&file_path).expect("get metadata");
         let mode = metadata.permissions().mode();
 
@@ -93,21 +82,16 @@ mod unix_tests {
         let target_path = temp_dir.path().join("target.txt");
         let link_path = temp_dir.path().join("link.txt");
 
-        // Create target file
         std::fs::write(&target_path, "target content").expect("write target");
 
-        // Create symlink
         create_symlink(&link_path, &target_path).expect("create symlink");
 
-        // Verify symlink was created
         let link_metadata = std::fs::symlink_metadata(&link_path).expect("get link metadata");
         assert!(link_metadata.is_symlink(), "Should be a symlink");
 
-        // Verify symlink points to correct target
         let resolved = std::fs::read_link(&link_path).expect("read link");
         assert_eq!(resolved, target_path, "Should point to target");
 
-        // Verify we can read through the symlink
         let content = std::fs::read_to_string(&link_path).expect("read through link");
         assert_eq!(content, "target content");
     }
@@ -119,13 +103,10 @@ mod unix_tests {
         let target_path = temp_dir.path().join("target.txt");
         let link_path = temp_dir.path().join("link.txt");
 
-        // Create target file
         std::fs::write(&target_path, "target content").expect("write target");
 
-        // Create symlink using std::os::unix
         std::os::unix::fs::symlink(&target_path, &link_path).expect("create symlink");
 
-        // Get metadata for the symlink
         let metadata = FileMetadata::from_path(&link_path, temp_dir.path()).expect("get metadata");
 
         assert!(metadata.is_symlink, "Should be marked as symlink");
@@ -147,13 +128,10 @@ mod unix_tests {
         let target_path = temp_dir.path().join("target.txt");
         let link_path = temp_dir.path().join("link.txt");
 
-        // Create target file
         std::fs::write(&target_path, "target content").expect("write target");
 
-        // Create symlink
         std::os::unix::fs::symlink(&target_path, &link_path).expect("create symlink");
 
-        // Enumerate with preserve mode
         let options = EnumerateOptions::preserve_symlinks();
         let files = enumerate_files(&[link_path], &options).expect("enumerate with preserve");
 
@@ -176,17 +154,14 @@ mod windows_tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let file_path = temp_dir.path().join("test_file.txt");
 
-        // Create a file
         std::fs::write(&file_path, "test content").expect("write file");
 
-        // Get metadata - permissions should be None on Windows
         let metadata = FileMetadata::from_path(&file_path, temp_dir.path()).expect("get metadata");
         assert!(
             metadata.permissions.is_none(),
             "Windows should not capture Unix permissions"
         );
 
-        // Applying permissions should be a no-op
         let result = apply_permissions(&file_path, Some(0o755));
         assert!(result.is_ok(), "apply_permissions should succeed (no-op)");
     }
@@ -198,16 +173,11 @@ mod windows_tests {
         let target_path = temp_dir.path().join("target.txt");
         let link_path = temp_dir.path().join("link.txt");
 
-        // Create target file
         std::fs::write(&target_path, "target content").expect("write target");
 
-        // Create "symlink" (will copy on Windows without elevation)
         let result = create_symlink(&link_path, &target_path);
 
-        // This might succeed (copy) or fail (no elevation)
-        // Either way, the function should handle it gracefully
         if result.is_ok() {
-            // Verify the file exists and has correct content
             let content = std::fs::read_to_string(&link_path).expect("read link");
             assert_eq!(content, "target content", "Content should match target");
         }
@@ -224,10 +194,8 @@ fn test_symlink_follow_mode() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let file_path = temp_dir.path().join("regular.txt");
 
-    // Create a regular file
     std::fs::write(&file_path, "regular content").expect("write file");
 
-    // Enumerate with follow mode (default)
     let options = EnumerateOptions::follow_symlinks();
     let files = enumerate_files(&[file_path], &options).expect("enumerate");
 
@@ -244,10 +212,8 @@ fn test_symlink_skip_mode() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let file_path = temp_dir.path().join("regular.txt");
 
-    // Create a regular file
     std::fs::write(&file_path, "regular content").expect("write file");
 
-    // Enumerate with skip mode
     let options = EnumerateOptions::skip_symlinks();
     let files = enumerate_files(&[file_path], &options).expect("enumerate");
 
@@ -257,25 +223,20 @@ fn test_symlink_skip_mode() {
 /// Test that `EnumerateOptions` builder methods work correctly.
 #[test]
 fn test_enumerate_options_builder() {
-    // Test default
     let default = EnumerateOptions::default();
     assert!(matches!(default.symlink_mode, SymlinkMode::Follow));
     assert!(!default.include_hidden);
     assert!(default.max_depth.is_none());
 
-    // Test follow_symlinks
     let follow = EnumerateOptions::follow_symlinks();
     assert!(matches!(follow.symlink_mode, SymlinkMode::Follow));
 
-    // Test preserve_symlinks
     let preserve = EnumerateOptions::preserve_symlinks();
     assert!(matches!(preserve.symlink_mode, SymlinkMode::Preserve));
 
-    // Test skip_symlinks
     let skip = EnumerateOptions::skip_symlinks();
     assert!(matches!(skip.symlink_mode, SymlinkMode::Skip));
 
-    // Test chaining
     let chained = EnumerateOptions::follow_symlinks()
         .with_hidden(true)
         .with_max_depth(5);
@@ -289,11 +250,9 @@ fn test_file_metadata_regular_file() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let file_path = temp_dir.path().join("test.txt");
 
-    // Create a file with known content
     let content = b"Hello, LocalDrop!";
     std::fs::write(&file_path, content).expect("write file");
 
-    // Get metadata
     let metadata = FileMetadata::from_path(&file_path, temp_dir.path()).expect("get metadata");
 
     assert_eq!(metadata.relative_path, PathBuf::from("test.txt"));
@@ -310,7 +269,6 @@ fn test_file_metadata_regular_file() {
 fn test_directory_enumeration() {
     let temp_dir = TempDir::new().expect("create temp dir");
 
-    // Create directory structure
     let sub_dir = temp_dir.path().join("subdir");
     std::fs::create_dir(&sub_dir).expect("create subdir");
 
@@ -318,13 +276,11 @@ fn test_directory_enumeration() {
     std::fs::write(sub_dir.join("file2.txt"), "content 2").expect("write file2");
     std::fs::write(sub_dir.join("file3.txt"), "content 3").expect("write file3");
 
-    // Enumerate
     let options = EnumerateOptions::default();
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
     assert_eq!(files.len(), 3, "Should find all 3 files");
 
-    // Verify relative paths are preserved
     let paths: Vec<_> = files.iter().map(|f| f.relative_path.clone()).collect();
     assert!(paths.iter().any(|p| p.ends_with("file1.txt")));
     assert!(paths.iter().any(|p| p.ends_with("file2.txt")));
@@ -336,17 +292,14 @@ fn test_directory_enumeration() {
 fn test_hidden_files() {
     let temp_dir = TempDir::new().expect("create temp dir");
 
-    // Create hidden and visible files
     std::fs::write(temp_dir.path().join("visible.txt"), "visible").expect("write visible");
     std::fs::write(temp_dir.path().join(".hidden"), "hidden").expect("write hidden");
 
-    // Enumerate without hidden files
     let options = EnumerateOptions::default();
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
     assert_eq!(files.len(), 1, "Should only find visible file");
     assert_eq!(files[0].file_name(), "visible.txt");
 
-    // Enumerate with hidden files
     let options = EnumerateOptions::default().with_hidden(true);
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
     assert_eq!(files.len(), 2, "Should find both files");
@@ -357,7 +310,6 @@ fn test_hidden_files() {
 fn test_max_depth() {
     let temp_dir = TempDir::new().expect("create temp dir");
 
-    // Create nested structure
     let level1 = temp_dir.path().join("level1");
     let level2 = level1.join("level2");
     let level3 = level2.join("level3");
@@ -368,11 +320,9 @@ fn test_max_depth() {
     std::fs::write(level2.join("l2.txt"), "level 2").expect("write l2");
     std::fs::write(level3.join("l3.txt"), "level 3").expect("write l3");
 
-    // Enumerate with max_depth 2 (root + 1 level)
     let options = EnumerateOptions::default().with_max_depth(2);
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
-    // Should find root.txt and l1.txt, but not l2.txt or l3.txt
     assert_eq!(files.len(), 2, "Should find 2 files within depth limit");
 
     let names: Vec<_> = files.iter().map(FileMetadata::file_name).collect();

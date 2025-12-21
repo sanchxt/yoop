@@ -20,10 +20,8 @@ use localdrop_core::transfer::ResumeState;
 fn test_resume_state_serialization() {
     let state = create_test_resume_state("TEST-123");
 
-    // Serialize to JSON
     let json = serde_json::to_string_pretty(&state).expect("serialize");
 
-    // Deserialize back
     let restored: ResumeState = serde_json::from_str(&json).expect("deserialize");
 
     assert_eq!(restored.transfer_id, state.transfer_id);
@@ -41,16 +39,13 @@ fn test_resume_state_serialization() {
 fn test_resume_state_chunk_tracking() {
     let mut state = create_test_resume_state("TEST-456");
 
-    // Initially no chunks completed
     assert!(state.completed_chunks.is_empty());
     assert_eq!(state.bytes_received, 0);
 
-    // Mark some chunks as completed
     state.mark_chunk_completed(0, 0, 1024);
     state.mark_chunk_completed(0, 1, 1024);
-    state.mark_chunk_completed(0, 2, 512); // Last chunk might be smaller
+    state.mark_chunk_completed(0, 2, 512);
 
-    // Verify tracking
     let chunks = state.get_completed_chunks(0);
     assert_eq!(chunks.len(), 3);
     assert!(chunks.contains(&0));
@@ -65,11 +60,9 @@ fn test_resume_state_chunk_tracking() {
 fn test_resume_state_duplicate_chunks() {
     let mut state = create_test_resume_state("TEST-789");
 
-    // Mark same chunk twice
     state.mark_chunk_completed(0, 0, 1024);
     state.mark_chunk_completed(0, 0, 1024);
 
-    // Should only count once
     let chunks = state.get_completed_chunks(0);
     assert_eq!(chunks.len(), 1);
     assert_eq!(state.bytes_received, 1024);
@@ -80,22 +73,17 @@ fn test_resume_state_duplicate_chunks() {
 fn test_resume_state_file_completion() {
     let mut state = create_test_resume_state("TEST-ABC");
 
-    // File not completed initially
     assert!(!state.is_file_completed(0));
     assert!(!state.is_transfer_completed());
 
-    // Mark file as completed with hash
     let test_hash: [u8; 32] = [0x42; 32];
     state.mark_file_completed(0, &test_hash);
 
-    // Now it should be marked complete
     assert!(state.is_file_completed(0));
 
-    // But not the other file
     assert!(!state.is_file_completed(1));
     assert!(!state.is_transfer_completed());
 
-    // Complete the second file
     state.mark_file_completed(1, &test_hash);
     assert!(state.is_transfer_completed());
 }
@@ -105,10 +93,8 @@ fn test_resume_state_file_completion() {
 fn test_resume_state_progress() {
     let mut state = create_test_resume_state("TEST-XYZ");
 
-    // Initially 0%
     assert!((state.progress_percentage() - 0.0).abs() < f64::EPSILON);
 
-    // Mark half the bytes as received
     let half_bytes = state.total_bytes / 2;
     state.bytes_received = half_bytes;
     let progress = state.progress_percentage();
@@ -117,7 +103,6 @@ fn test_resume_state_progress() {
         "Progress should be ~50%"
     );
 
-    // Mark all bytes as received
     state.bytes_received = state.total_bytes;
     assert!((state.progress_percentage() - 100.0).abs() < 0.01);
 }
@@ -134,7 +119,6 @@ fn test_resume_state_empty_transfer() {
         PathBuf::from("/tmp"),
     );
 
-    // Empty transfer should be 100% complete
     assert!((state.progress_percentage() - 100.0).abs() < f64::EPSILON);
     assert!(state.is_transfer_completed());
 }
@@ -156,10 +140,8 @@ async fn test_resume_manager_persistence() {
     state.mark_chunk_completed(0, 1, 1024);
     let transfer_id = state.transfer_id;
 
-    // Save
     manager.save(&state).await.expect("save");
 
-    // Load and verify
     let loaded = manager
         .load(&transfer_id)
         .await
@@ -178,22 +160,17 @@ async fn test_resume_manager_cleanup_expired() {
         .await
         .expect("create manager");
 
-    // Create an old state by manipulating updated_at
     let mut old_state = create_test_resume_state("OLD-STATE");
     old_state.updated_at = chrono::Utc::now() - chrono::Duration::days(10);
     manager.save(&old_state).await.expect("save old");
 
-    // Create a recent state
     let recent_state = create_test_resume_state("RECENT-STATE");
     manager.save(&recent_state).await.expect("save recent");
 
-    // Run cleanup
     let cleaned = manager.cleanup_expired().await.expect("cleanup");
 
-    // Old state should be cleaned up
     assert_eq!(cleaned, 1);
 
-    // Recent state should still exist
     let states = manager.list().await.expect("list");
     assert_eq!(states.len(), 1);
     assert_eq!(states[0].code, "RECENT-STATE");
@@ -207,20 +184,18 @@ async fn test_resume_manager_list_ordering() {
         .await
         .expect("create manager");
 
-    // Create states with different update times
     let mut state1 = create_test_resume_state("FIRST");
     state1.updated_at = chrono::Utc::now() - chrono::Duration::hours(2);
 
     let mut state2 = create_test_resume_state("SECOND");
     state2.updated_at = chrono::Utc::now() - chrono::Duration::hours(1);
 
-    let state3 = create_test_resume_state("THIRD"); // Most recent
+    let state3 = create_test_resume_state("THIRD");
 
     manager.save(&state1).await.expect("save 1");
     manager.save(&state2).await.expect("save 2");
     manager.save(&state3).await.expect("save 3");
 
-    // List should be sorted by updated_at descending
     let listed = manager.list().await.expect("list");
     assert_eq!(listed.len(), 3);
     assert_eq!(listed[0].code, "THIRD");
@@ -236,7 +211,6 @@ async fn test_resume_manager_find_by_code_multiple() {
         .await
         .expect("create manager");
 
-    // Save multiple states
     let state1 = create_test_resume_state("AAA-111");
     let state2 = create_test_resume_state("BBB-222");
     let state3 = create_test_resume_state("CCC-333");
@@ -245,7 +219,6 @@ async fn test_resume_manager_find_by_code_multiple() {
     manager.save(&state2).await.expect("save 2");
     manager.save(&state3).await.expect("save 3");
 
-    // Find middle one
     let found = manager
         .find_by_code("BBB-222")
         .await
@@ -263,7 +236,6 @@ async fn test_resume_manager_delete_nonexistent() {
         .await
         .expect("create manager");
 
-    // Deleting non-existent state should succeed silently
     let result = manager.delete(&Uuid::new_v4()).await;
     assert!(result.is_ok());
 }
@@ -280,11 +252,9 @@ async fn test_file_writer_resumable() {
     let temp_dir = TempDir::new().expect("create temp dir");
     let file_path = temp_dir.path().join("test_file.bin");
 
-    // Create initial data
     let chunk_size = 1024;
     let total_size = chunk_size * 3;
 
-    // First, create a normal writer and write first chunk
     {
         let mut writer = FileWriter::new(file_path.clone(), total_size as u64)
             .await
@@ -296,12 +266,11 @@ async fn test_file_writer_resumable() {
         writer.finalize().await.expect("finalize");
     }
 
-    // Now "resume" from chunk 1
     {
         let mut writer = FileWriter::new_resumable(
             file_path.clone(),
             total_size as u64,
-            chunk_size as u64, // Already wrote chunk 0
+            chunk_size as u64,
         )
         .await
         .expect("create resumable writer");
@@ -322,7 +291,6 @@ async fn test_file_writer_resumable() {
         assert_ne!(hash, [0u8; 32], "Hash should not be zeros");
     }
 
-    // Verify the file exists and has correct size
     let metadata = std::fs::metadata(&file_path).expect("get metadata");
     assert_eq!(metadata.len(), total_size as u64);
 }
@@ -342,7 +310,6 @@ async fn test_file_writer_out_of_order_chunks() {
         .await
         .expect("create writer");
 
-    // Write chunks out of order: 3, 1, 0, 2
     let chunks = vec![
         (3, create_test_chunk(3, chunk_size)),
         (1, create_test_chunk(1, chunk_size)),
@@ -361,7 +328,6 @@ async fn test_file_writer_out_of_order_chunks() {
 
     let _hash = writer.finalize_with_full_hash().await.expect("finalize");
 
-    // Verify file size
     let metadata = std::fs::metadata(&file_path).expect("get metadata");
     assert_eq!(metadata.len(), total_size as u64);
 }

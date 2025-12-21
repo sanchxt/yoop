@@ -177,15 +177,12 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
         println!();
     }
 
-    // Ask for confirmation unless in batch mode
     let accepted = if !args.batch && !json && !quiet {
-        // Start keep-alive to prevent connection timeout while user reads prompt
         session.start_keep_alive()?;
 
         print!("  Accept clipboard content? [Y/n] ");
         io::stdout().flush()?;
 
-        // Use async stdin to not block the tokio runtime
         let mut input = String::new();
         let stdin = tokio::io::stdin();
         let mut reader = BufReader::new(stdin);
@@ -258,7 +255,6 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
     let config = TransferConfig::default();
 
     if let Some(ref code_str) = args.code {
-        // Connect to existing sync session
         if !quiet && !json {
             println!("  Connecting to sync session {}...", code_str);
             println!();
@@ -282,7 +278,6 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
 
         run_sync_session(session, runner, quiet, json).await
     } else {
-        // Host new sync session
         let (code, session, runner) = match ClipboardSyncSession::host(config).await {
             Ok(result) => result,
             Err(e) => {
@@ -336,12 +331,10 @@ async fn run_sync_session(
         println!();
     }
 
-    // Run the sync session
     let result = runner.run().await;
 
     match result {
         Ok((stats, mut event_rx)) => {
-            // Drain any remaining events
             while let Ok(event) = event_rx.try_recv() {
                 match event {
                     SyncEvent::Sent { content_type, size } => {
@@ -357,7 +350,6 @@ async fn run_sync_session(
                 }
             }
 
-            // Print final stats
             if json {
                 let output = serde_json::json!({
                     "status": "complete",
@@ -384,7 +376,6 @@ async fn run_sync_session(
                 println!();
             }
 
-            // Signal session shutdown
             session.shutdown();
 
             Ok(())
