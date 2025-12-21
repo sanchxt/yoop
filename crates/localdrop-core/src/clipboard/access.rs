@@ -420,12 +420,12 @@ pub fn create_clipboard() -> Result<Box<dyn ClipboardAccess>> {
 mod tests {
     use super::*;
 
-    // Windows clipboard tests are skipped in CI due to heap corruption issues
-    // when multiple tests access the clipboard concurrently in headless environments.
+    // Clipboard tests are skipped on Windows (heap corruption) and macOS (SIGSEGV)
+    // in CI due to issues when accessing clipboard in headless environments.
     // See: https://github.com/1Password/arboard/issues/30
 
     #[test]
-    #[cfg_attr(windows, ignore)]
+    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
     fn test_create_clipboard() {
         let result = create_clipboard();
         if result.is_err() {
@@ -436,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore)]
+    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
     fn test_clipboard_text_roundtrip() {
         let clipboard = create_clipboard();
         if clipboard.is_err() {
@@ -465,7 +465,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(windows, ignore)]
+    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
     fn test_content_hash_consistency() {
         let clipboard = create_clipboard();
         if clipboard.is_err() {
