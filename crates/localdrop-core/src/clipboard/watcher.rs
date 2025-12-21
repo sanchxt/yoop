@@ -195,6 +195,13 @@ mod tests {
                 .as_ref()
                 .map_or(0, ClipboardContent::hash)
         }
+
+        fn read_expected(
+            &mut self,
+            _expected: Option<crate::protocol::ClipboardContentType>,
+        ) -> crate::Result<Option<ClipboardContent>> {
+            self.read()
+        }
     }
 
     #[test]

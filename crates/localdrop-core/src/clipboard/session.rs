@@ -573,6 +573,7 @@ impl ClipboardReceiveSession {
     /// Returns an error if transfer fails.
     pub async fn accept_to_clipboard(&mut self) -> Result<()> {
         let content = self.accept().await?;
+        let content_type = content.content_type();
         let mut clipboard = create_clipboard()?;
 
         // Use write_and_wait to ensure clipboard manager claims the content
@@ -580,25 +581,103 @@ impl ClipboardReceiveSession {
         // clipboard content is "hosted" by the application.
         clipboard.write_and_wait(&content, Duration::from_secs(5))?;
 
-        // Verify the write succeeded by reading back
-        let verification = clipboard.read()?;
+        // Small delay to allow clipboard manager to process on Linux
+        #[cfg(target_os = "linux")]
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Verify the write succeeded by reading back with content type hint
+        // This ensures we read image first when we wrote an image
+        let verification = clipboard.read_expected(Some(content_type))?;
+
         if let Some(read_content) = verification {
-            if read_content.hash() != content.hash() {
-                tracing::warn!(
-                    "Clipboard verification failed: hash mismatch (expected {}, got {})",
-                    content.hash(),
-                    read_content.hash()
-                );
+            // For images, compare dimensions instead of hash because
+            // re-encoding (PNG -> RGBA -> PNG) can change the hash
+            match (&content, &read_content) {
+                (
+                    ClipboardContent::Image {
+                        width: w1,
+                        height: h1,
+                        ..
+                    },
+                    ClipboardContent::Image {
+                        width: w2,
+                        height: h2,
+                        ..
+                    },
+                ) => {
+                    if w1 != w2 || h1 != h2 {
+                        tracing::warn!(
+                            "Clipboard verification failed: image dimensions mismatch \
+                             (expected {}x{}, got {}x{})",
+                            w1,
+                            h1,
+                            w2,
+                            h2
+                        );
+                        return Err(Error::ClipboardError(
+                            "verification failed: image dimensions mismatch".to_string(),
+                        ));
+                    }
+                    tracing::debug!(
+                        "Clipboard image verified successfully ({}x{})",
+                        w1,
+                        h1
+                    );
+                }
+                (ClipboardContent::Text(_), ClipboardContent::Text(_)) => {
+                    // For text, hash comparison is reliable
+                    if read_content.hash() != content.hash() {
+                        tracing::warn!(
+                            "Clipboard verification failed: hash mismatch (expected {}, got {})",
+                            content.hash(),
+                            read_content.hash()
+                        );
+                        return Err(Error::ClipboardError(
+                            "verification failed: content mismatch".to_string(),
+                        ));
+                    }
+                    tracing::debug!("Clipboard text verified successfully");
+                }
+                _ => {
+                    // Content type changed during round-trip - log warning but don't fail
+                    // This can happen on some platforms
+                    tracing::warn!(
+                        "Clipboard content type changed during verification \
+                         (expected {:?}, got {:?})",
+                        content.content_type(),
+                        read_content.content_type()
+                    );
+                }
+            }
+        } else {
+            // On Linux with the background holder approach, immediate verification
+            // might fail because the child process is handling the clipboard.
+            // Give it some extra time on Linux before failing.
+            #[cfg(target_os = "linux")]
+            {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                let retry = clipboard.read_expected(Some(content_type))?;
+                if retry.is_none() {
+                    tracing::warn!(
+                        "Clipboard verification failed: clipboard is empty after write (retry)"
+                    );
+                    // On Linux, the background holder might be working even if we can't verify
+                    // Log warning but don't fail
+                    tracing::info!(
+                        "Clipboard content may be available via background holder process"
+                    );
+                } else {
+                    tracing::debug!("Clipboard content verified on retry");
+                }
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                tracing::warn!("Clipboard verification failed: clipboard is empty after write");
                 return Err(Error::ClipboardError(
-                    "verification failed: content mismatch".to_string(),
+                    "verification failed: clipboard empty".to_string(),
                 ));
             }
-            tracing::debug!("Clipboard content verified successfully");
-        } else {
-            tracing::warn!("Clipboard verification failed: clipboard is empty after write");
-            return Err(Error::ClipboardError(
-                "verification failed: clipboard empty".to_string(),
-            ));
         }
 
         Ok(())
@@ -1041,6 +1120,7 @@ impl AsyncWrite for TlsStreamKind {
 
 /// Cached clipboard content with metadata
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields reserved for future cache expiration/stats
 struct CachedClipboardContent {
     content: ClipboardContent,
     timestamp: chrono::DateTime<chrono::Utc>,

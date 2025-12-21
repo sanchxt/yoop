@@ -9,6 +9,7 @@ use arboard::Clipboard;
 use image::ImageEncoder;
 
 use crate::error::{Error, Result};
+use crate::protocol::ClipboardContentType;
 
 use super::ClipboardContent;
 
@@ -46,6 +47,24 @@ pub trait ClipboardAccess: Send + Sync {
     ///
     /// Returns 0 if clipboard is empty or unreadable.
     fn content_hash(&mut self) -> u64;
+
+    /// Read clipboard content with an expected type hint.
+    ///
+    /// When expecting an image, tries to read image first before text.
+    /// This helps with verification after setting image content, since
+    /// trying text first might return stale text data.
+    ///
+    /// # Arguments
+    ///
+    /// * `expected` - Optional hint about expected content type
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if clipboard access fails.
+    fn read_expected(
+        &mut self,
+        expected: Option<ClipboardContentType>,
+    ) -> Result<Option<ClipboardContent>>;
 }
 
 /// Native clipboard implementation using arboard.
@@ -69,6 +88,7 @@ impl NativeClipboard {
 impl ClipboardAccess for NativeClipboard {
     #[cfg(target_os = "linux")]
     fn write_and_wait(&mut self, content: &ClipboardContent, timeout: Duration) -> Result<()> {
+        use super::linux_holder::{hold_image_in_background, DisplayServer};
         use arboard::SetExtLinux;
         use std::time::Instant;
 
@@ -76,39 +96,34 @@ impl ClipboardAccess for NativeClipboard {
 
         match content {
             ClipboardContent::Text(text) => {
+                // Text clipboard works reliably with arboard's wait_until
                 self.clipboard
                     .set()
                     .wait_until(deadline)
                     .text(text.clone())
                     .map_err(|e| Error::ClipboardError(format!("failed to set text: {e}")))?;
+                tracing::debug!("Clipboard: text written and claimed by clipboard manager");
             }
-            ClipboardContent::Image {
-                data,
-                width: _,
-                height: _,
-            } => {
-                // Decode PNG to RGBA
-                let img = image::load_from_memory_with_format(data, image::ImageFormat::Png)
-                    .map_err(|e| Error::ClipboardError(format!("failed to decode PNG: {e}")))?;
+            ClipboardContent::Image { data, width, height } => {
+                // Images need special handling on Linux, especially Wayland.
+                // arboard's wait_until() doesn't reliably persist images.
+                // Instead, we fork a background process to hold the clipboard.
+                let display_server = DisplayServer::detect();
+                tracing::debug!(
+                    "Clipboard: writing image {}x{} on {:?}",
+                    width,
+                    height,
+                    display_server
+                );
 
-                let rgba = img.to_rgba8();
-                let (w, h) = rgba.dimensions();
+                // Use the background holder approach for image persistence
+                // This forks a child process that holds the clipboard content
+                hold_image_in_background(data.clone(), *width, *height, timeout)?;
 
-                let image_data = arboard::ImageData {
-                    width: w as usize,
-                    height: h as usize,
-                    bytes: std::borrow::Cow::Owned(rgba.into_raw()),
-                };
-
-                self.clipboard
-                    .set()
-                    .wait_until(deadline)
-                    .image(image_data)
-                    .map_err(|e| Error::ClipboardError(format!("failed to set image: {e}")))?;
+                tracing::debug!("Clipboard: image written via background holder");
             }
         }
 
-        tracing::debug!("Clipboard: content written and claimed by clipboard manager");
         Ok(())
     }
 
@@ -223,9 +238,83 @@ impl ClipboardAccess for NativeClipboard {
     fn content_hash(&mut self) -> u64 {
         self.read().ok().flatten().map_or(0, |c| c.hash())
     }
+
+    fn read_expected(
+        &mut self,
+        expected: Option<ClipboardContentType>,
+    ) -> Result<Option<ClipboardContent>> {
+        match expected {
+            Some(ClipboardContentType::ImagePng) => {
+                // When expecting an image, try image first
+                if let Some(content) = self.try_read_image()? {
+                    return Ok(Some(content));
+                }
+                // Fall back to text
+                self.try_read_text()
+            }
+            Some(ClipboardContentType::PlainText) | None => {
+                // Default behavior: text first, then image
+                self.read()
+            }
+        }
+    }
 }
 
 impl NativeClipboard {
+    /// Try to read text from clipboard.
+    fn try_read_text(&mut self) -> Result<Option<ClipboardContent>> {
+        match self.clipboard.get_text() {
+            Ok(text) if !text.is_empty() => {
+                tracing::trace!("Clipboard: read {} bytes of text", text.len());
+                Ok(Some(ClipboardContent::Text(text)))
+            }
+            Ok(_) => Ok(None),
+            Err(e) => {
+                tracing::debug!("Clipboard: failed to read text: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
+    /// Try to read image from clipboard.
+    fn try_read_image(&mut self) -> Result<Option<ClipboardContent>> {
+        match self.clipboard.get_image() {
+            Ok(image) => {
+                // Convert to PNG bytes
+                let width = u32::try_from(image.width)
+                    .map_err(|_| Error::ClipboardError("image width too large".to_string()))?;
+                let height = u32::try_from(image.height)
+                    .map_err(|_| Error::ClipboardError("image height too large".to_string()))?;
+
+                // arboard gives us RGBA bytes
+                let rgba_data = image.bytes.into_owned();
+
+                // Encode as PNG
+                let mut png_data = Vec::new();
+                let encoder = image::codecs::png::PngEncoder::new_with_quality(
+                    &mut png_data,
+                    image::codecs::png::CompressionType::Fast,
+                    image::codecs::png::FilterType::Adaptive,
+                );
+
+                encoder
+                    .write_image(&rgba_data, width, height, image::ExtendedColorType::Rgba8)
+                    .map_err(|e| Error::ClipboardError(format!("failed to encode PNG: {e}")))?;
+
+                tracing::trace!("Clipboard: read image {}x{}", width, height);
+                Ok(Some(ClipboardContent::Image {
+                    data: png_data,
+                    width,
+                    height,
+                }))
+            }
+            Err(e) => {
+                tracing::debug!("Clipboard: failed to read image: {}", e);
+                Ok(None)
+            }
+        }
+    }
+
     /// Verify clipboard is accessible (for early failure detection).
     ///
     /// This attempts to read from the clipboard to verify access is working.

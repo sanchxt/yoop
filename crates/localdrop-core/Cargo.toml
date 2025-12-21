@@ -74,6 +74,10 @@ axum = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
 
+# Linux-specific dependencies for clipboard holder
+[target.'cfg(target_os = "linux")'.dependencies]
+nix = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

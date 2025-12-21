@@ -34,10 +34,14 @@
 //! ```
 
 pub mod access;
+#[cfg(target_os = "linux")]
+pub mod linux_holder;
 pub mod session;
 pub mod watcher;
 
 pub use access::{create_clipboard, diagnose_clipboard, ClipboardAccess, NativeClipboard};
+#[cfg(target_os = "linux")]
+pub use linux_holder::{hold_image_in_background, DisplayServer, DEFAULT_HOLDER_TIMEOUT};
 pub use session::{
     ClipboardReceiveSession, ClipboardShareSession, ClipboardSyncSession, SyncEvent,
     SyncSessionRunner, SyncStats,
