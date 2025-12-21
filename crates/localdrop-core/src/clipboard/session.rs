@@ -570,9 +570,7 @@ impl ClipboardReceiveSession {
         {
             if matches!(&content, ClipboardContent::Image { .. }) {
                 tokio::time::sleep(Duration::from_millis(600)).await;
-                tracing::info!(
-                    "Image set via background holder process - ready to paste"
-                );
+                tracing::info!("Image set via background holder process - ready to paste");
                 return Ok(());
             }
         }
@@ -609,11 +607,7 @@ impl ClipboardReceiveSession {
                             "verification failed: image dimensions mismatch".to_string(),
                         ));
                     }
-                    tracing::debug!(
-                        "Clipboard image verified successfully ({}x{})",
-                        w1,
-                        h1
-                    );
+                    tracing::debug!("Clipboard image verified successfully ({}x{})", w1, h1);
                 }
                 (ClipboardContent::Text(_), ClipboardContent::Text(_)) => {
                     if read_content.hash() != content.hash() {
@@ -828,14 +822,7 @@ impl ClipboardSyncSession {
         let broadcaster = HybridBroadcaster::new(config.discovery_port).await?;
 
         let device_id = uuid::Uuid::new_v4();
-        let packet = DiscoveryPacket::new(
-            &code,
-            &device_name,
-            device_id,
-            local_addr.port(),
-            0,
-            0,
-        );
+        let packet = DiscoveryPacket::new(&code, &device_name, device_id, local_addr.port(), 0, 0);
 
         broadcaster.start(packet, config.broadcast_interval).await?;
 
@@ -1241,10 +1228,12 @@ impl SyncSessionRunner {
                                             break None;
                                         }
 
-                                        let width =
-                                            u32::from_be_bytes([data[0], data[1], data[2], data[3]]);
-                                        let height =
-                                            u32::from_be_bytes([data[4], data[5], data[6], data[7]]);
+                                        let width = u32::from_be_bytes([
+                                            data[0], data[1], data[2], data[3],
+                                        ]);
+                                        let height = u32::from_be_bytes([
+                                            data[4], data[5], data[6], data[7],
+                                        ]);
                                         let content_data = &data[8..];
 
                                         break ClipboardContent::from_bytes(
@@ -1266,15 +1255,12 @@ impl SyncSessionRunner {
                                     MessageType::TransferCancel => {
                                         return Ok(());
                                     }
-                                    _ => {
-                                    }
+                                    _ => {}
                                 }
                             };
 
                             if let Some(content) = content {
-                                match clipboard
-                                    .write_and_wait(&content, Duration::from_secs(2))
-                                {
+                                match clipboard.write_and_wait(&content, Duration::from_secs(2)) {
                                     Ok(()) => {
                                         #[cfg(target_os = "linux")]
                                         if matches!(&content, ClipboardContent::Image { .. }) {
@@ -1315,7 +1301,8 @@ impl SyncSessionRunner {
                                 let cache_guard = cache.lock().await;
                                 cache_guard.as_ref().map(|(_, c)| c.content.clone())
                             };
-                            let content = cached_content.or_else(|| clipboard.read().ok().flatten());
+                            let content =
+                                cached_content.or_else(|| clipboard.read().ok().flatten());
 
                             if let Some(content) = content {
                                 let data = content.to_bytes();

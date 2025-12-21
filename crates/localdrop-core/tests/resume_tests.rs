@@ -267,13 +267,10 @@ async fn test_file_writer_resumable() {
     }
 
     {
-        let mut writer = FileWriter::new_resumable(
-            file_path.clone(),
-            total_size as u64,
-            chunk_size as u64,
-        )
-        .await
-        .expect("create resumable writer");
+        let mut writer =
+            FileWriter::new_resumable(file_path.clone(), total_size as u64, chunk_size as u64)
+                .await
+                .expect("create resumable writer");
 
         let chunk1 = create_test_chunk(1, chunk_size);
         writer

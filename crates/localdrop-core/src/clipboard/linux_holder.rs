@@ -50,8 +50,9 @@ pub const DEFAULT_HOLDER_TIMEOUT: Duration = Duration::from_secs(300);
 /// - Cannot find the current executable
 /// - Process spawn fails
 /// - Writing data to child fails
+#[allow(clippy::cognitive_complexity)]
 pub fn hold_image_in_background(
-    png_data: Vec<u8>,
+    png_data: &[u8],
     width: u32,
     height: u32,
     timeout: Duration,
@@ -66,10 +67,10 @@ pub fn hold_image_in_background(
     );
 
     let exe = std::env::current_exe().map_err(|e| {
-        Error::ClipboardError(format!("cannot find current executable for holder: {}", e))
+        Error::ClipboardError(format!("cannot find current executable for holder: {e}"))
     })?;
 
-    tracing::debug!("Clipboard holder executable: {:?}", exe);
+    tracing::debug!("Clipboard holder executable: {exe:?}");
 
     let mut cmd = Command::new(&exe);
     cmd.arg("internal-clipboard-hold")
@@ -93,16 +94,13 @@ pub fn hold_image_in_background(
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| Error::ClipboardError(format!("failed to spawn clipboard holder: {}", e)))?;
+        .map_err(|e| Error::ClipboardError(format!("failed to spawn clipboard holder: {e}")))?;
 
-    tracing::debug!(
-        "Clipboard holder process spawned with PID {:?}",
-        child.id()
-    );
+    tracing::debug!("Clipboard holder process spawned with PID {:?}", child.id());
 
     if let Some(mut stdin) = child.stdin.take() {
-        stdin.write_all(&png_data).map_err(|e| {
-            Error::ClipboardError(format!("failed to write image data to holder: {}", e))
+        stdin.write_all(png_data).map_err(|e| {
+            Error::ClipboardError(format!("failed to write image data to holder: {e}"))
         })?;
     } else {
         return Err(Error::ClipboardError(
@@ -135,7 +133,7 @@ pub fn hold_image_in_background(
 /// # Errors
 ///
 /// Returns an error if process spawn fails or writing data fails.
-pub fn hold_text_in_background(text: String, timeout: Duration) -> Result<()> {
+pub fn hold_text_in_background(text: &str, timeout: Duration) -> Result<()> {
     let display_server = DisplayServer::detect();
     tracing::info!(
         "Spawning clipboard holder for text ({} bytes) on {:?}",
@@ -144,7 +142,7 @@ pub fn hold_text_in_background(text: String, timeout: Duration) -> Result<()> {
     );
 
     let exe = std::env::current_exe().map_err(|e| {
-        Error::ClipboardError(format!("cannot find current executable for holder: {}", e))
+        Error::ClipboardError(format!("cannot find current executable for holder: {e}"))
     })?;
 
     let mut cmd = Command::new(&exe);
@@ -169,16 +167,13 @@ pub fn hold_text_in_background(text: String, timeout: Duration) -> Result<()> {
 
     let mut child = cmd
         .spawn()
-        .map_err(|e| Error::ClipboardError(format!("failed to spawn clipboard holder: {}", e)))?;
+        .map_err(|e| Error::ClipboardError(format!("failed to spawn clipboard holder: {e}")))?;
 
-    tracing::debug!(
-        "Clipboard holder process spawned with PID {:?}",
-        child.id()
-    );
+    tracing::debug!("Clipboard holder process spawned with PID {:?}", child.id());
 
     if let Some(mut stdin) = child.stdin.take() {
         stdin.write_all(text.as_bytes()).map_err(|e| {
-            Error::ClipboardError(format!("failed to write text data to holder: {}", e))
+            Error::ClipboardError(format!("failed to write text data to holder: {e}"))
         })?;
     } else {
         return Err(Error::ClipboardError(
@@ -208,18 +203,18 @@ impl DisplayServer {
     #[must_use]
     pub fn detect() -> Self {
         if std::env::var("WAYLAND_DISPLAY").is_ok() {
-            DisplayServer::Wayland
+            Self::Wayland
         } else if std::env::var("DISPLAY").is_ok() {
-            DisplayServer::X11
+            Self::X11
         } else {
-            DisplayServer::Unknown
+            Self::Unknown
         }
     }
 
     /// Check if we're running on Wayland.
     #[must_use]
     pub fn is_wayland(&self) -> bool {
-        matches!(self, DisplayServer::Wayland)
+        matches!(self, Self::Wayland)
     }
 }
 
@@ -230,7 +225,7 @@ mod tests {
     #[test]
     fn test_display_server_detection() {
         let server = DisplayServer::detect();
-        println!("Detected display server: {:?}", server);
+        println!("Detected display server: {server:?}");
     }
 
     #[test]

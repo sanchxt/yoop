@@ -64,7 +64,6 @@ fn configure_tcp_keepalive(stream: &TcpStream) -> Result<()> {
         .with_time(Duration::from_secs(10))
         .with_interval(Duration::from_secs(5));
 
-
     socket_ref
         .set_tcp_keepalive(&keepalive)
         .map_err(|e| Error::Io(std::io::Error::other(e)))?;

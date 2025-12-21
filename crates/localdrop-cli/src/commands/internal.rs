@@ -4,9 +4,13 @@
 //! to spawn a subprocess that holds clipboard content on Linux (Wayland/X11).
 
 use std::io::Read;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "linux")]
+use std::time::Instant;
 
 use anyhow::{bail, Result};
 use arboard::Clipboard;
@@ -24,6 +28,7 @@ use arboard::Clipboard;
 /// # Errors
 ///
 /// Returns an error if clipboard cannot be set.
+#[allow(clippy::too_many_lines)]
 pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
     let mut data = Vec::new();
     std::io::stdin().read_to_end(&mut data)?;
@@ -38,15 +43,14 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
         content_type
     );
 
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-
     #[cfg(target_os = "linux")]
     {
         use arboard::SetExtLinux;
 
-        let mut clipboard = Clipboard::new().map_err(|e| {
-            anyhow::anyhow!("Failed to access clipboard in holder process: {}", e)
-        })?;
+        let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+
+        let mut clipboard = Clipboard::new()
+            .map_err(|e| anyhow::anyhow!("Failed to access clipboard in holder process: {}", e))?;
 
         match content_type {
             "image" => {
@@ -57,7 +61,10 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                 std::thread::spawn(move || {
                     std::thread::sleep(Duration::from_secs(watchdog_timeout));
                     if watchdog_flag.load(Ordering::SeqCst) {
-                        eprintln!("Clipboard holder: safety timeout reached after {} seconds, exiting", watchdog_timeout);
+                        eprintln!(
+                            "Clipboard holder: safety timeout reached after {} seconds, exiting",
+                            watchdog_timeout
+                        );
                         std::process::exit(0);
                     }
                 });
@@ -79,7 +86,10 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     bytes: std::borrow::Cow::Owned(rgba.into_raw()),
                 };
 
-                eprintln!("Clipboard holder: waiting for clipboard to be claimed (up to {} seconds)", watchdog_timeout);
+                eprintln!(
+                    "Clipboard holder: waiting for clipboard to be claimed (up to {} seconds)",
+                    watchdog_timeout
+                );
                 clipboard
                     .set()
                     .wait()
@@ -114,9 +124,8 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
 
     #[cfg(not(target_os = "linux"))]
     {
-        let mut clipboard = Clipboard::new().map_err(|e| {
-            anyhow::anyhow!("Failed to access clipboard in holder process: {}", e)
-        })?;
+        let mut clipboard = Clipboard::new()
+            .map_err(|e| anyhow::anyhow!("Failed to access clipboard in holder process: {}", e))?;
 
         match content_type {
             "image" => {
@@ -137,9 +146,9 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     bytes: std::borrow::Cow::Owned(rgba.into_raw()),
                 };
 
-                clipboard.set_image(image_data).map_err(|e| {
-                    anyhow::anyhow!("Failed to set image in holder: {}", e)
-                })?;
+                clipboard
+                    .set_image(image_data)
+                    .map_err(|e| anyhow::anyhow!("Failed to set image in holder: {}", e))?;
 
                 eprintln!("Clipboard holder: image set successfully");
             }
@@ -152,9 +161,9 @@ pub fn run_clipboard_hold(content_type: &str, timeout_secs: u64) -> Result<()> {
                     text.len()
                 );
 
-                clipboard.set_text(text).map_err(|e| {
-                    anyhow::anyhow!("Failed to set text in holder: {}", e)
-                })?;
+                clipboard
+                    .set_text(text)
+                    .map_err(|e| anyhow::anyhow!("Failed to set text in holder: {}", e))?;
 
                 eprintln!("Clipboard holder: text set successfully");
             }
