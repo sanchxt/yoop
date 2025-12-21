@@ -156,8 +156,6 @@ impl Broadcaster {
         socket.set_broadcast(true)?;
         socket.set_reuse_address(true)?;
 
-        // macOS requires SO_REUSEPORT for multiple processes/threads to bind to the same port
-        // This improves reliability on macOS networks
         #[cfg(target_os = "macos")]
         socket.set_reuse_port(true)?;
 
@@ -192,7 +190,7 @@ impl Broadcaster {
     pub async fn start(&self, packet: DiscoveryPacket, interval: Duration) -> Result<()> {
         let mut is_active = self.is_active.lock().await;
         if *is_active {
-            return Ok(()); // Already broadcasting
+            return Ok(());
         }
         *is_active = true;
         drop(is_active);
@@ -206,7 +204,6 @@ impl Broadcaster {
             let broadcast_addr = SocketAddrV4::new(Ipv4Addr::BROADCAST, port);
 
             loop {
-                // Serialize packet
                 let json = match serde_json::to_vec(&packet) {
                     Ok(json) => json,
                     Err(e) => {
@@ -215,12 +212,10 @@ impl Broadcaster {
                     }
                 };
 
-                // Send broadcast
                 if let Err(e) = socket.send_to(&json, broadcast_addr).await {
                     tracing::warn!("Failed to send broadcast: {}", e);
                 }
 
-                // Wait for next interval or shutdown
                 tokio::select! {
                     () = tokio::time::sleep(interval) => {}
                     _ = shutdown_rx.recv() => {
@@ -239,7 +234,6 @@ impl Broadcaster {
     /// Stop broadcasting.
     pub async fn stop(&self) {
         let _ = self.shutdown_tx.send(());
-        // Wait for the task to stop
         while *self.is_active.lock().await {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -265,29 +259,22 @@ impl Listener {
     ///
     /// Returns an error if the socket cannot be created.
     pub async fn new(port: u16) -> Result<Self> {
-        // Create socket with socket2 for SO_REUSEADDR support
         let socket = socket2::Socket::new(
             socket2::Domain::IPV4,
             socket2::Type::DGRAM,
             Some(socket2::Protocol::UDP),
         )?;
 
-        // Allow address reuse (important for multiple listeners)
         socket.set_reuse_address(true)?;
 
-        // macOS requires SO_REUSEPORT for multiple processes/threads to bind to the same port
-        // This improves reliability on macOS networks
         #[cfg(target_os = "macos")]
         socket.set_reuse_port(true)?;
 
-        // Bind to all interfaces on the discovery port
         let addr = SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, port);
         socket.bind(&addr.into())?;
 
-        // Set to non-blocking for tokio
         socket.set_nonblocking(true)?;
 
-        // Convert to tokio UdpSocket
         let std_socket: std::net::UdpSocket = socket.into();
         let socket = UdpSocket::from_std(std_socket)?;
 
@@ -321,7 +308,6 @@ impl Listener {
 
             match result {
                 Ok(Ok((len, source))) => {
-                    // Try to parse the packet
                     if let Ok(packet) = serde_json::from_slice::<DiscoveryPacket>(&buf[..len]) {
                         if packet.is_valid() && packet.code == code_str {
                             return Ok(DiscoveredShare {
@@ -336,7 +322,6 @@ impl Listener {
                     tracing::warn!("Error receiving UDP packet: {}", e);
                 }
                 Err(_) => {
-                    // Timeout
                     return Err(Error::CodeNotFound(code_str));
                 }
             }
@@ -367,7 +352,6 @@ impl Listener {
 
             match result {
                 Ok(Ok((len, source))) => {
-                    // Try to parse the packet
                     if let Ok(packet) = serde_json::from_slice::<DiscoveryPacket>(&buf[..len]) {
                         if packet.is_valid() {
                             let device_id = packet.device_id;
@@ -386,7 +370,6 @@ impl Listener {
                     tracing::warn!("Error receiving UDP packet: {}", e);
                 }
                 Err(_) => {
-                    // Timeout - scan complete
                     break;
                 }
             }
@@ -428,10 +411,8 @@ mod tests {
         let device_id = Uuid::new_v4();
         let packet = DiscoveryPacket::new(&code, "Test Device", device_id, 52530, 5, 1024 * 1024);
 
-        // Serialize
         let json = serde_json::to_string(&packet).expect("serialize");
 
-        // Deserialize
         let deserialized: DiscoveryPacket = serde_json::from_str(&json).expect("deserialize");
 
         assert_eq!(deserialized.protocol, packet.protocol);
@@ -458,17 +439,14 @@ mod tests {
         let device_id = Uuid::new_v4();
         let packet = DiscoveryPacket::new(&code, "Test Device", device_id, 52530, 1, 1024);
 
-        // Start broadcasting
         broadcaster
             .start(packet, Duration::from_millis(100))
             .await
             .expect("start broadcasting");
 
-        // Wait a bit for the task to start
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(broadcaster.is_broadcasting().await);
 
-        // Stop broadcasting
         broadcaster.stop().await;
         assert!(!broadcaster.is_broadcasting().await);
     }
@@ -476,33 +454,25 @@ mod tests {
     #[tokio::test]
     #[ignore = "UDP broadcast unreliable in CI environments (especially macOS)"]
     async fn test_discovery_loopback() {
-        // Use a random high port to avoid conflicts
         let port = 52600 + (std::process::id() % 100) as u16;
 
-        // Create listener first (needs to bind before broadcaster sends)
         let listener = Listener::new(port).await.expect("create listener");
 
-        // Create broadcaster
         let broadcaster = Broadcaster::new(port).await.expect("create broadcaster");
 
-        // Create packet
         let code = generate_code();
         let device_id = Uuid::new_v4();
         let packet = DiscoveryPacket::new(&code, "Test Device", device_id, 52530, 3, 2048);
 
-        // Start broadcasting
         broadcaster
             .start(packet.clone(), Duration::from_millis(50))
             .await
             .expect("start broadcasting");
 
-        // Try to find the code
         let result = listener.find(&code, Duration::from_secs(2)).await;
 
-        // Stop broadcaster
         broadcaster.stop().await;
 
-        // Verify result
         assert!(result.is_ok(), "Should find the share");
         let share = result.unwrap();
         assert_eq!(share.packet.code, code.to_string());
@@ -515,7 +485,6 @@ mod tests {
         let port = 52700 + (std::process::id() % 100) as u16;
         let listener = Listener::new(port).await.expect("create listener");
 
-        // Try to find a non-existent code
         let code = generate_code();
         let result = listener.find(&code, Duration::from_millis(100)).await;
 
@@ -528,10 +497,8 @@ mod tests {
     async fn test_scan_multiple_shares() {
         let port = 52800 + (std::process::id() % 100) as u16;
 
-        // Create listener
         let listener = Listener::new(port).await.expect("create listener");
 
-        // Create multiple broadcasters
         let mut broadcasters = Vec::new();
         for i in 0..3u16 {
             let broadcaster = Broadcaster::new(port).await.expect("create broadcaster");
@@ -553,15 +520,12 @@ mod tests {
             broadcasters.push(broadcaster);
         }
 
-        // Scan for shares
         let shares = listener.scan(Duration::from_millis(300)).await;
 
-        // Stop all broadcasters
         for broadcaster in &broadcasters {
             broadcaster.stop().await;
         }
 
-        // Should find all 3 unique shares
         assert_eq!(
             shares.len(),
             3,

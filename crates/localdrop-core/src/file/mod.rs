@@ -33,7 +33,7 @@ use crate::error::Result;
 ///
 /// Returns the mode bits on Unix systems, or None on other platforms.
 #[cfg(unix)]
-#[allow(clippy::unnecessary_wraps)] // Must return Option to match non-unix signature
+#[allow(clippy::unnecessary_wraps)]
 fn get_permissions(metadata: &std::fs::Metadata) -> Option<u32> {
     use std::os::unix::fs::PermissionsExt;
     Some(metadata.permissions().mode() & 0o7777)
@@ -64,7 +64,6 @@ pub fn apply_permissions(path: &Path, permissions: Option<u32>) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
 
     if let Some(mode) = permissions {
-        // Only apply user/group/other permissions (mask out file type bits)
         let mode = mode & 0o7777;
         let perms = std::fs::Permissions::from_mode(mode);
         std::fs::set_permissions(path, perms)?;
@@ -77,7 +76,6 @@ pub fn apply_permissions(path: &Path, permissions: Option<u32>) -> Result<()> {
 /// No-op on non-Unix platforms.
 #[cfg(not(unix))]
 pub fn apply_permissions(_path: &Path, _permissions: Option<u32>) -> Result<()> {
-    // Windows doesn't use Unix-style permissions
     Ok(())
 }
 
@@ -128,7 +126,6 @@ fn get_symlink_target(path: &Path, is_symlink: bool) -> Option<PathBuf> {
 /// Returns an error if symlink creation fails.
 #[cfg(unix)]
 pub fn create_symlink(link_path: &Path, target: &Path) -> Result<()> {
-    // Create parent directories if needed
     if let Some(parent) = link_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -158,18 +155,15 @@ pub fn create_symlink(link_path: &Path, target: &Path) -> Result<()> {
         target.display()
     );
 
-    // Create parent directories if needed
     if let Some(parent) = link_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
 
-    // Fall back to copying
     if target.is_dir() {
         copy_dir_recursive(target, link_path)?;
     } else if target.exists() {
         std::fs::copy(target, link_path)?;
     } else {
-        // Target doesn't exist, create an empty file as placeholder
         std::fs::write(link_path, b"")?;
         tracing::warn!(
             "Symlink target does not exist, created empty placeholder: {}",
@@ -233,11 +227,9 @@ impl FileMetadata {
     ///
     /// Returns an error if the file cannot be read.
     pub fn from_path(path: &Path, base: &Path) -> Result<Self> {
-        // Use symlink_metadata to get info about the link itself, not the target
         let symlink_metadata = std::fs::symlink_metadata(path)?;
         let is_symlink = symlink_metadata.is_symlink();
 
-        // For size and other attributes, follow the symlink if it exists
         let metadata = if is_symlink {
             std::fs::metadata(path).unwrap_or_else(|_| symlink_metadata.clone())
         } else {
@@ -384,7 +376,6 @@ fn enumerate_directory(
     for entry in walker.into_iter().filter_map(std::result::Result::ok) {
         let path = entry.path();
 
-        // Skip hidden files if requested
         if !options.include_hidden {
             if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                 if name.starts_with('.') {
@@ -393,23 +384,19 @@ fn enumerate_directory(
             }
         }
 
-        // Get symlink metadata (info about the link itself)
         let Ok(symlink_meta) = std::fs::symlink_metadata(path) else {
-            continue; // Skip files we can't read metadata for
+            continue;
         };
 
         let is_symlink = symlink_meta.is_symlink();
 
-        // Handle symlinks according to mode
         if is_symlink {
             match options.symlink_mode {
-                SymlinkMode::Skip => {} // Do nothing, loop continues naturally
+                SymlinkMode::Skip => {}
                 SymlinkMode::Preserve => {
-                    // Include the symlink itself as a file entry
                     files.push(FileMetadata::from_path(path, base)?);
                 }
                 SymlinkMode::Follow => {
-                    // Follow the symlink - walkdir handles this, include if it's a file
                     if path.is_file() {
                         files.push(FileMetadata::from_path(path, base)?);
                     }
@@ -605,7 +592,6 @@ impl FileWriter {
             tokio::fs::create_dir_all(parent).await?;
         }
 
-        // Open file for read/write, create if doesn't exist
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -614,7 +600,6 @@ impl FileWriter {
             .open(&output_path)
             .await?;
 
-        // Pre-allocate file to expected size if needed
         let metadata = file.metadata().await?;
         if metadata.len() < expected_size {
             file.set_len(expected_size).await?;
@@ -625,8 +610,6 @@ impl FileWriter {
             expected_size,
             file: Some(file),
             bytes_written: resume_offset,
-            // Note: For resumed transfers, we can't continue the hash from the middle,
-            // so we'll compute the full file hash at finalization time
             sha256_hasher: sha2::Sha256::new(),
         })
     }
@@ -695,9 +678,6 @@ impl FileWriter {
             file.write_all(&chunk.data).await?;
         }
 
-        // Note: For out-of-order writes, we don't update the hasher here
-        // since SHA-256 requires sequential data. The hash will be computed
-        // during finalization by reading the complete file.
         self.bytes_written += chunk.data.len() as u64;
 
         Ok(())
@@ -739,10 +719,9 @@ impl FileWriter {
         }
         self.file = None;
 
-        // Read the complete file and compute hash
         let mut hasher = sha2::Sha256::new();
         let mut file = tokio::fs::File::open(&self.output_path).await?;
-        let mut buffer = vec![0u8; 64 * 1024]; // 64KB buffer
+        let mut buffer = vec![0u8; 64 * 1024];
 
         loop {
             let n = file.read(&mut buffer).await?;
@@ -838,20 +817,16 @@ mod tests {
         let temp_dir = TempDir::new().expect("create temp dir");
         let output_path = temp_dir.path().join("empty_output.txt");
 
-        // Create writer for empty file
         let writer = FileWriter::new(output_path.clone(), 0)
             .await
             .expect("create writer");
 
-        // Finalize without writing any chunks
         let sha256 = writer.finalize().await.expect("finalize");
 
-        // Verify file exists and is empty
         assert!(output_path.exists(), "Empty file should be created");
         let content = std::fs::read(&output_path).expect("read file");
         assert!(content.is_empty(), "File should be empty");
 
-        // SHA-256 of empty data
         let expected_sha256 = crate::crypto::sha256(b"");
         assert_eq!(
             sha256, expected_sha256,

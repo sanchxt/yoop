@@ -99,7 +99,6 @@ impl MdnsDiscoveredShare {
     fn from_service_info(info: &ServiceInfo) -> Option<Self> {
         let properties = info.get_properties();
 
-        // Helper to extract string value from TxtProperty
         let get_str =
             |key: &str| -> Option<String> { properties.get(key).map(|p| p.val_str().to_string()) };
 
@@ -114,7 +113,6 @@ impl MdnsDiscoveredShare {
             .unwrap_or(0);
         let protocol_version = get_str(txt_keys::VERSION).unwrap_or_else(|| "1.0".to_string());
 
-        // Get the first IPv4 address
         let addresses = info.get_addresses();
         let ip = addresses.iter().find(|addr| addr.is_ipv4())?;
         let port = info.get_port();
@@ -168,19 +166,15 @@ impl MdnsBroadcaster {
     ///
     /// Returns an error if registration fails.
     pub async fn register(&self, properties: MdnsProperties) -> Result<()> {
-        // Generate a unique instance name
         let instance_name = format!("LocalDrop-{}", &properties.code);
 
-        // Build TXT properties
         let txt_props: Vec<_> = properties.to_txt_properties();
 
-        // Get local hostname and ensure it ends with .local.
         let raw_hostname = hostname::get().map_or_else(
             |_| "localhost".to_string(),
             |h| h.to_string_lossy().to_string(),
         );
 
-        // mDNS requires hostnames to end with .local.
         let hostname = if raw_hostname.ends_with(".local.") {
             raw_hostname
         } else if raw_hostname.to_lowercase().ends_with(".local") {
@@ -189,7 +183,6 @@ impl MdnsBroadcaster {
             format!("{raw_hostname}.local.")
         };
 
-        // Create service info
         let service_info = ServiceInfo::new(
             SERVICE_TYPE,
             &instance_name,
@@ -200,14 +193,12 @@ impl MdnsBroadcaster {
         )
         .map_err(|e| Error::Internal(format!("Failed to create mDNS service info: {e}")))?;
 
-        // Register the service
         self.daemon
             .as_ref()
             .ok_or_else(|| Error::Internal("mDNS daemon already shutdown".to_string()))?
             .register(service_info)
             .map_err(|e| Error::Internal(format!("Failed to register mDNS service: {e}")))?;
 
-        // Store instance name for later unregistration
         *self.instance_name.lock().await = Some(instance_name.clone());
 
         tracing::info!(
@@ -236,12 +227,9 @@ impl MdnsBroadcaster {
                 .unregister(&full_name)
                 .map_err(|e| Error::Internal(format!("Failed to unregister mDNS service: {e}")))?;
 
-            // Wait for the unregister operation to complete
-            // This prevents "sending on a closed channel" errors
-            match tokio::time::timeout(
-                std::time::Duration::from_millis(500),
-                async { receiver.recv_async().await },
-            )
+            match tokio::time::timeout(std::time::Duration::from_millis(500), async {
+                receiver.recv_async().await
+            })
             .await
             {
                 Ok(Ok(status)) => {
@@ -272,8 +260,6 @@ impl MdnsBroadcaster {
                 .shutdown()
                 .map_err(|e| Error::Internal(format!("Failed to shutdown mDNS daemon: {e}")))?;
 
-            // Wait for the shutdown to complete synchronously
-            // Use a timeout to avoid blocking forever
             match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(status) => {
                     tracing::debug!(?status, "mDNS broadcaster shutdown completed");
@@ -295,13 +281,14 @@ impl Drop for MdnsBroadcaster {
         if let Some(daemon) = self.daemon.take() {
             match daemon.shutdown() {
                 Ok(receiver) => {
-                    // Wait for shutdown to complete with a timeout
                     match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                         Ok(status) => {
                             tracing::debug!(?status, "mDNS broadcaster drop shutdown completed");
                         }
                         Err(_) => {
-                            tracing::debug!("mDNS broadcaster drop shutdown timed out or disconnected");
+                            tracing::debug!(
+                                "mDNS broadcaster drop shutdown timed out or disconnected"
+                            );
                         }
                     }
                 }
@@ -363,7 +350,6 @@ impl MdnsListener {
                 return Err(Error::CodeNotFound(code_str.to_string()));
             }
 
-            // Use tokio timeout for async compatibility
             let result =
                 tokio::time::timeout(remaining, async { self.receiver.recv_async().await }).await;
 
@@ -382,7 +368,6 @@ impl MdnsListener {
                         }
                     }
                 }
-                // Channel closed or timeout - share not found
                 Ok(Err(_)) | Err(_) => {
                     return Err(Error::CodeNotFound(code_str.to_string()));
                 }
@@ -420,7 +405,6 @@ impl MdnsListener {
                         }
                     }
                 }
-                // Channel closed or timeout
                 Ok(Err(_)) | Err(_) => break,
             }
         }
@@ -445,7 +429,6 @@ impl MdnsListener {
     ///
     /// Returns an error if the shutdown fails.
     pub fn shutdown(mut self) -> Result<()> {
-        // Stop browsing first to properly clean up
         self.stop_browsing();
 
         if let Some(daemon) = self.daemon.take() {
@@ -453,8 +436,6 @@ impl MdnsListener {
                 .shutdown()
                 .map_err(|e| Error::Internal(format!("Failed to shutdown mDNS daemon: {e}")))?;
 
-            // Wait for the shutdown to complete synchronously
-            // Use a timeout to avoid blocking forever
             match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                 Ok(status) => {
                     tracing::debug!(?status, "mDNS listener shutdown completed");
@@ -474,7 +455,6 @@ impl MdnsListener {
 impl Drop for MdnsListener {
     #[allow(clippy::cognitive_complexity)]
     fn drop(&mut self) {
-        // Stop browsing first to prevent "sending on a closed channel" error
         if let Some(ref daemon) = self.daemon {
             if let Err(e) = daemon.stop_browse(SERVICE_TYPE) {
                 tracing::debug!("Failed to stop mDNS browse during drop: {e}");
@@ -484,13 +464,14 @@ impl Drop for MdnsListener {
         if let Some(daemon) = self.daemon.take() {
             match daemon.shutdown() {
                 Ok(receiver) => {
-                    // Wait for shutdown to complete with a timeout
                     match receiver.recv_timeout(std::time::Duration::from_millis(500)) {
                         Ok(status) => {
                             tracing::debug!(?status, "mDNS listener drop shutdown completed");
                         }
                         Err(_) => {
-                            tracing::debug!("mDNS listener drop shutdown timed out or disconnected");
+                            tracing::debug!(
+                                "mDNS listener drop shutdown timed out or disconnected"
+                            );
                         }
                     }
                 }
@@ -521,7 +502,6 @@ mod tests {
         let txt = props.to_txt_properties();
         assert_eq!(txt.len(), 6);
 
-        // Check that code is in the properties
         let code_prop = txt.iter().find(|(k, _)| *k == txt_keys::CODE);
         assert!(code_prop.is_some());
         assert_eq!(code_prop.unwrap().1, "TEST-123");
@@ -529,7 +509,6 @@ mod tests {
 
     #[test]
     fn test_service_type_format() {
-        // Verify service type ends with .local.
         assert!(SERVICE_TYPE.ends_with(".local."));
         assert!(SERVICE_TYPE.starts_with("_localdrop._tcp"));
     }

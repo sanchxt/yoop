@@ -64,9 +64,6 @@ fn configure_tcp_keepalive(stream: &TcpStream) -> Result<()> {
         .with_time(Duration::from_secs(10))
         .with_interval(Duration::from_secs(5));
 
-    // Note: with_retries() is not available on all platforms (e.g., Windows)
-    // so we omit it for cross-platform compatibility
-
     socket_ref
         .set_tcp_keepalive(&keepalive)
         .map_err(|e| Error::Io(std::io::Error::other(e)))?;
@@ -335,7 +332,6 @@ impl ShareSession {
         let (stream, peer_addr) = self.listener.accept().await?;
         tracing::info!("Connection from {}", peer_addr);
 
-        // Enable TCP keep-alive to prevent connection timeout during user prompt
         configure_tcp_keepalive(&stream)?;
 
         let acceptor = TlsAcceptor::from(Arc::new(
@@ -453,9 +449,6 @@ impl ShareSession {
         let payload = protocol::encode_payload(&file_list)?;
         protocol::write_frame(stream, MessageType::FileList, &payload).await?;
 
-        // Wait for FileListAck, responding to Ping messages to keep connection alive
-        // This loop handles the case where the receiver takes time to respond
-        // (e.g., user is reading the file list before accepting)
         loop {
             let (header, ack_payload) = protocol::read_frame(stream).await?;
 
@@ -465,10 +458,8 @@ impl ShareSession {
                     return Ok(ack.accepted);
                 }
                 MessageType::Ping => {
-                    // Respond to keep-alive ping from receiver
                     tracing::debug!("Received Ping, responding with Pong");
                     protocol::write_frame(stream, MessageType::Pong, &[]).await?;
-                    // Continue waiting for FileListAck
                 }
                 _ => {
                     return Err(Error::UnexpectedMessage {
@@ -501,8 +492,6 @@ impl ShareSession {
             let chunks = chunker.read_chunks(&file_path, file_index).await?;
             let total_chunks = chunks.len() as u64;
 
-            // Handle empty files (0 bytes) - send ChunkStart with total_chunks=0
-            // so the receiver knows to create an empty file
             if chunks.is_empty() {
                 let start = ChunkStartPayload {
                     file_index,
@@ -663,8 +652,6 @@ impl std::fmt::Debug for ReceiveSession {
 
 impl Drop for ReceiveSession {
     fn drop(&mut self) {
-        // Abort the keep-alive task if still running to prevent channel errors
-        // This handles cases where the session is dropped without explicit cleanup
         if let Some(handle) = self.keep_alive_handle.take() {
             handle.task_handle.abort();
         }
@@ -691,8 +678,6 @@ impl ReceiveSession {
         let listener = HybridListener::new(config.discovery_port).await?;
         let discovered = listener.find(code, config.discovery_timeout).await?;
 
-        // Explicitly shutdown listener to give mDNS daemon time to process events
-        // This prevents "sending on a closed channel" errors during Drop
         if let Err(e) = listener.shutdown() {
             tracing::debug!("Listener shutdown: {e}");
         }
@@ -707,7 +692,6 @@ impl ReceiveSession {
             SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
         let stream = TcpStream::connect(transfer_addr).await?;
 
-        // Enable TCP keep-alive to prevent connection timeout during user prompt
         configure_tcp_keepalive(&stream)?;
 
         let tls_config = TlsConfig::client()?;
@@ -784,7 +768,6 @@ impl ReceiveSession {
     ///
     /// Returns an error if the TLS stream is not available (already taken).
     pub fn start_keep_alive(&mut self) -> Result<()> {
-        // Don't start if already running
         if self.keep_alive_handle.is_some() {
             return Ok(());
         }
@@ -816,10 +799,8 @@ impl ReceiveSession {
     /// Returns an error if the keep-alive task failed or the stream cannot be recovered.
     pub async fn stop_keep_alive(&mut self) -> Result<()> {
         if let Some(handle) = self.keep_alive_handle.take() {
-            // Signal the task to stop (ignore if receiver is already dropped)
             let _ = handle.stop_tx.send(());
 
-            // Wait for the task to finish and get the stream back
             match handle.task_handle.await {
                 Ok(Ok(stream)) => {
                     self.tls_stream = Some(stream);
@@ -836,7 +817,6 @@ impl ReceiveSession {
                 }
             }
         } else {
-            // Keep-alive was not running, nothing to do
             Ok(())
         }
     }
@@ -851,30 +831,25 @@ impl ReceiveSession {
     ) -> Result<ClientTlsStream> {
         loop {
             tokio::select! {
-                // Check if we should stop
                 _ = &mut stop_rx => {
                     tracing::debug!("Keep-alive task received stop signal");
                     return Ok(stream);
                 }
 
-                // Wait for the keep-alive interval, then send Ping
                 () = tokio::time::sleep(KEEPALIVE_INTERVAL) => {
                     tracing::debug!("Sending keep-alive Ping");
 
-                    // Send Ping
                     if let Err(e) = protocol::write_frame(&mut stream, MessageType::Ping, &[]).await {
                         tracing::warn!("Failed to send Ping: {}", e);
                         return Err(e);
                     }
 
-                    // Wait for Pong with timeout
                     match tokio::time::timeout(KEEPALIVE_TIMEOUT, protocol::read_frame(&mut stream)).await {
                         Ok(Ok((header, _))) => {
                             if header.message_type == MessageType::Pong {
                                 tracing::debug!("Received Pong");
                             } else {
                                 tracing::warn!("Expected Pong, got {:?}", header.message_type);
-                                // Continue anyway - server might have sent something else
                             }
                         }
                         Ok(Err(e)) => {
@@ -897,7 +872,6 @@ impl ReceiveSession {
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept(&mut self) -> Result<()> {
-        // Stop keep-alive first if running (recovers the stream)
         self.stop_keep_alive().await?;
 
         let mut stream = self
@@ -931,7 +905,6 @@ impl ReceiveSession {
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept_files(&mut self, indices: &[usize]) -> Result<()> {
-        // Stop keep-alive first if running (recovers the stream)
         self.stop_keep_alive().await?;
 
         let mut stream = self
@@ -957,7 +930,6 @@ impl ReceiveSession {
 
     /// Decline the transfer.
     pub async fn decline(&mut self) {
-        // Stop keep-alive first if running (recovers the stream, ignore errors)
         let _ = self.stop_keep_alive().await;
 
         if let Some(mut stream) = self.tls_stream.take() {
@@ -1018,7 +990,6 @@ impl ReceiveSession {
             SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
         let stream = TcpStream::connect(transfer_addr).await?;
 
-        // Enable TCP keep-alive to prevent connection timeout during user prompt
         configure_tcp_keepalive(&stream)?;
 
         let tls_config = TlsConfig::client()?;
@@ -1038,10 +1009,8 @@ impl ReceiveSession {
         Self::do_handshake(&mut tls_stream).await?;
         Self::do_code_verification(&mut tls_stream, &code, &session_key).await?;
 
-        // Receive file list to verify it matches
         let files = Self::receive_file_list(&mut tls_stream).await?;
 
-        // Verify file list matches the resume state
         if files.len() != resume_state.files.len() {
             return Err(Error::ResumeMismatch(
                 "File list has changed since the transfer was interrupted".to_string(),
@@ -1081,7 +1050,6 @@ impl ReceiveSession {
     ///
     /// Returns an error if the transfer fails.
     pub async fn accept_with_resume(&mut self, resume_state: &ResumeState) -> Result<()> {
-        // Stop keep-alive first if running (recovers the stream)
         self.stop_keep_alive().await?;
 
         let mut stream = self
@@ -1089,7 +1057,6 @@ impl ReceiveSession {
             .take()
             .ok_or_else(|| Error::Internal("no TLS stream".to_string()))?;
 
-        // First accept the transfer
         let ack = FileListAckPayload {
             accepted: true,
             accepted_files: None,
@@ -1097,7 +1064,6 @@ impl ReceiveSession {
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut stream, MessageType::FileListAck, &ack_payload).await?;
 
-        // Send resume request with our progress
         let resume_request = protocol::ResumeRequestPayload {
             transfer_id: resume_state.transfer_id,
             completed_chunks: resume_state.completed_chunks.clone(),
@@ -1106,7 +1072,6 @@ impl ReceiveSession {
         let resume_payload = protocol::encode_payload(&resume_request)?;
         protocol::write_frame(&mut stream, MessageType::ResumeRequest, &resume_payload).await?;
 
-        // Wait for resume acknowledgment
         let (header, payload) = protocol::read_frame(&mut stream).await?;
         if header.message_type != MessageType::ResumeAck {
             return Err(Error::UnexpectedMessage {
@@ -1125,7 +1090,6 @@ impl ReceiveSession {
 
         self.update_state(TransferState::Transferring);
 
-        // Receive remaining chunks
         self.do_receive_resumed(&mut stream, resume_state).await?;
 
         self.update_state(TransferState::Completed);
@@ -1151,7 +1115,6 @@ impl ReceiveSession {
                     let start: ChunkStartPayload = protocol::decode_payload(&payload)?;
 
                     if current_file_index != Some(start.file_index) {
-                        // Finalize previous file
                         if let Some(writer) = current_writer.take() {
                             let _sha256 = writer.finalize_with_full_hash().await?;
                         }
@@ -1159,12 +1122,10 @@ impl ReceiveSession {
                         let file = &self.files[start.file_index];
                         let output_path = self.output_dir.join(&file.relative_path);
 
-                        // Calculate how many bytes we've already received for this file
                         let completed_chunks = resume_state.completed_chunks.get(&start.file_index);
                         let bytes_completed = completed_chunks
                             .map_or(0, |chunks| chunks.len() as u64 * chunk_size as u64);
 
-                        // Use resumable writer
                         current_writer = Some(
                             FileWriter::new_resumable(output_path, file.size, bytes_completed)
                                 .await?,
@@ -1192,7 +1153,6 @@ impl ReceiveSession {
                         is_last: false,
                     };
 
-                    // Calculate the offset for this chunk
                     let offset = chunk_data.chunk_index * chunk_size as u64;
 
                     let success = if let Some(ref mut writer) = current_writer {
@@ -1216,7 +1176,6 @@ impl ReceiveSession {
                         });
                     }
 
-                    // Update progress
                     {
                         let mut progress = self.progress_rx.borrow().clone();
                         progress.file_bytes_transferred += chunk_data.data.len() as u64;
@@ -1529,7 +1488,6 @@ impl ResumeState {
     /// Mark a file as completed with its hash.
     pub fn mark_file_completed(&mut self, file_index: usize, sha256_hash: &[u8; 32]) {
         use std::fmt::Write;
-        // Convert hash to hex string without external dependency
         let hash_hex = sha256_hash.iter().fold(String::new(), |mut acc, b| {
             let _ = write!(acc, "{b:02x}");
             acc

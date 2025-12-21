@@ -35,12 +35,16 @@ async fn main() -> Result<()> {
         Command::Share(args) => commands::share::run(args).await,
         Command::Receive(args) => commands::receive::run(args).await,
         Command::Send(args) => commands::send::run(args).await,
+        Command::Clipboard(args) => commands::clipboard::run(args).await,
         Command::Scan(args) => commands::scan::run(args).await,
         Command::Trust(args) => commands::trust::run(args).await,
         Command::Web(args) => commands::web::run(args).await,
         Command::Config(args) => commands::config::run(args).await,
         Command::Diagnose(args) => commands::diagnose::run(args).await,
         Command::History(args) => commands::history::run(args).await,
+        Command::InternalClipboardHold(args) => {
+            commands::internal::run_clipboard_hold(&args.content_type, args.timeout)
+        }
     }
 }
 

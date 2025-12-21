@@ -133,7 +133,7 @@ async fn test_multiple_files_transfer() {
 #[ignore = "Requires UDP broadcast which doesn't work in CI"]
 async fn test_large_file_transfer() {
     let temp_dir = create_temp_dir();
-    let large_content = random_bytes(3 * 1024 * 1024); // 3 MB
+    let large_content = random_bytes(3 * 1024 * 1024);
     let test_file = create_test_file(temp_dir.path(), "large.bin", &large_content);
     let output_dir = temp_dir.path().join("output");
     std::fs::create_dir_all(&output_dir).unwrap();
@@ -360,16 +360,12 @@ async fn test_transfer_survives_delay_with_keepalive() {
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].size, test_content.len() as u64);
 
-    // Start keep-alive before the simulated user delay
     receive_session
         .start_keep_alive()
         .expect("Failed to start keep-alive");
 
-    // Simulate user reading the prompt for 15 seconds
-    // This delay would normally cause the connection to drop without keep-alive
     tokio::time::sleep(Duration::from_secs(15)).await;
 
-    // Accept should work because keep-alive kept the connection alive
     receive_session
         .accept()
         .await
@@ -410,29 +406,23 @@ async fn test_keepalive_start_stop_cycle() {
         .await
         .expect("Failed to connect to share");
 
-    // Start keep-alive
     receive_session
         .start_keep_alive()
         .expect("Failed to start keep-alive");
 
-    // Wait a bit for some ping/pong exchanges
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Stop keep-alive explicitly (not through accept/decline)
     receive_session
         .stop_keep_alive()
         .await
         .expect("Failed to stop keep-alive");
 
-    // Start again
     receive_session
         .start_keep_alive()
         .expect("Failed to restart keep-alive");
 
-    // Wait again
     tokio::time::sleep(Duration::from_secs(2)).await;
 
-    // Now accept (which also stops keep-alive internally)
     receive_session
         .accept()
         .await
@@ -475,15 +465,12 @@ async fn test_decline_after_keepalive() {
 
     assert_eq!(receive_session.files().len(), 1);
 
-    // Start keep-alive
     receive_session
         .start_keep_alive()
         .expect("Failed to start keep-alive");
 
-    // Simulate user thinking
     tokio::time::sleep(Duration::from_secs(3)).await;
 
-    // Decline (which stops keep-alive internally)
     receive_session.decline().await;
 
     let _share_result = share_handle.await.expect("Share task panicked");

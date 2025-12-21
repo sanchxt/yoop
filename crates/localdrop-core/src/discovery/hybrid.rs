@@ -80,15 +80,13 @@ impl HybridBroadcaster {
     pub async fn start(&self, packet: DiscoveryPacket, interval: Duration) -> Result<()> {
         let mut is_active = self.is_active.lock().await;
         if *is_active {
-            return Ok(()); // Already broadcasting
+            return Ok(());
         }
         *is_active = true;
         drop(is_active);
 
-        // Start UDP broadcast
         self.udp.start(packet.clone(), interval).await?;
 
-        // Start mDNS registration
         #[cfg(feature = "mdns")]
         if let Some(ref mdns) = self.mdns {
             let properties = MdnsProperties {
@@ -116,10 +114,8 @@ impl HybridBroadcaster {
 
     /// Stop broadcasting.
     pub async fn stop(&self) {
-        // Stop UDP broadcast
         self.udp.stop().await;
 
-        // Stop mDNS
         #[cfg(feature = "mdns")]
         if let Some(ref mdns) = self.mdns {
             if let Err(e) = mdns.unregister().await {
@@ -215,7 +211,6 @@ impl HybridListener {
         #[cfg(feature = "mdns")]
         {
             if let Some(ref mdns) = self.mdns {
-                // Race UDP and mDNS
                 let udp_future = self.udp.find(code, timeout);
                 let mdns_future = mdns.find(code, timeout);
 
@@ -244,13 +239,10 @@ impl HybridListener {
                     }
                 }
 
-                // If both failed via select (one returned), try the other
-                // This handles the case where one method completes first with an error
                 return Err(Error::CodeNotFound(code.to_string()));
             }
         }
 
-        // Fallback to UDP only
         self.udp.find(code, timeout).await
     }
 
@@ -280,19 +272,15 @@ impl HybridListener {
         {
             if let Some(ref mdns) = self.mdns {
                 if prefer_mdns {
-                    // Try mDNS first
                     if let Ok(mdns_share) = mdns.find(code, half_timeout).await {
                         tracing::debug!(code = %code, "Found share via mDNS");
                         return Ok(mdns_to_discovered(mdns_share));
                     }
-                    // Fall back to UDP
                     return self.udp.find(code, half_timeout).await;
                 }
-                // Try UDP first
                 if let Ok(share) = self.udp.find(code, half_timeout).await {
                     return Ok(share);
                 }
-                // Fall back to mDNS
                 if let Ok(mdns_share) = mdns.find(code, half_timeout).await {
                     tracing::debug!(code = %code, "Found share via mDNS fallback");
                     return Ok(mdns_to_discovered(mdns_share));
@@ -301,7 +289,6 @@ impl HybridListener {
             }
         }
 
-        // UDP only
         self.udp.find(code, timeout).await
     }
 
@@ -324,16 +311,13 @@ impl HybridListener {
         #[cfg(feature = "mdns")]
         {
             if let Some(ref mdns) = self.mdns {
-                // Run both scans in parallel
                 let (udp_shares, mdns_shares) =
                     tokio::join!(self.udp.scan(duration), mdns.scan(duration),);
 
-                // Add UDP shares
                 for share in udp_shares {
                     shares.insert(share.packet.device_id, share);
                 }
 
-                // Add mDNS shares (may override UDP if same device)
                 for mdns_share in mdns_shares {
                     shares.insert(mdns_share.device_id, mdns_to_discovered(mdns_share));
                 }
@@ -342,7 +326,6 @@ impl HybridListener {
             }
         }
 
-        // UDP only
         self.udp.scan(duration).await
     }
 
@@ -420,17 +403,14 @@ mod tests {
         let device_id = Uuid::new_v4();
         let packet = DiscoveryPacket::new(&code, "Test Device", device_id, 52530, 1, 1024);
 
-        // Start broadcasting
         broadcaster
             .start(packet, Duration::from_millis(100))
             .await
             .expect("start broadcasting");
 
-        // Wait a bit for the task to start
         tokio::time::sleep(Duration::from_millis(50)).await;
         assert!(broadcaster.is_broadcasting().await);
 
-        // Stop broadcasting
         broadcaster.stop().await;
         assert!(!broadcaster.is_broadcasting().await);
     }
@@ -440,7 +420,6 @@ mod tests {
         let port = 53000 + (std::process::id() % 100) as u16;
         let listener = HybridListener::new(port).await.expect("create listener");
 
-        // Try to find a non-existent code
         let code = generate_code();
         let result = listener.find(&code, Duration::from_millis(100)).await;
 
@@ -452,8 +431,7 @@ mod tests {
         let port = 53100 + (std::process::id() % 100) as u16;
         let listener = HybridListener::new(port).await.expect("create listener");
 
-        // Scan should return empty when nothing is broadcasting
         let shares = listener.scan(Duration::from_millis(100)).await;
-        assert!(shares.is_empty() || !shares.is_empty()); // May find real network services
+        assert!(shares.is_empty() || !shares.is_empty());
     }
 }

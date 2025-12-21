@@ -75,6 +75,16 @@ pub enum MessageType {
     ResumeRequest = 0x40,
     /// Resume acknowledgment (sender confirms what to retransfer)
     ResumeAck = 0x41,
+    /// Clipboard content metadata
+    ClipboardMeta = 0x50,
+    /// Clipboard content data
+    ClipboardData = 0x51,
+    /// Clipboard acknowledgment
+    ClipboardAck = 0x52,
+    /// Clipboard content changed notification (for sync mode)
+    ClipboardChanged = 0x53,
+    /// Clipboard content request (for sync mode)
+    ClipboardRequest = 0x54,
     /// Error message
     Error = 0xFF,
 }
@@ -100,6 +110,11 @@ impl MessageType {
             0x31 => Some(Self::Pong),
             0x40 => Some(Self::ResumeRequest),
             0x41 => Some(Self::ResumeAck),
+            0x50 => Some(Self::ClipboardMeta),
+            0x51 => Some(Self::ClipboardData),
+            0x52 => Some(Self::ClipboardAck),
+            0x53 => Some(Self::ClipboardChanged),
+            0x54 => Some(Self::ClipboardRequest),
             0xFF => Some(Self::Error),
             _ => None,
         }
@@ -282,6 +297,52 @@ pub struct ResumeAckPayload {
     /// Reason if not accepted
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// Clipboard content type identifier.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[repr(u8)]
+pub enum ClipboardContentType {
+    /// Plain text content
+    PlainText = 0x01,
+    /// Image in PNG format
+    ImagePng = 0x10,
+}
+
+/// Clipboard metadata payload (JSON).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardMetaPayload {
+    /// Type of clipboard content
+    pub content_type: ClipboardContentType,
+    /// Size in bytes
+    pub size: u64,
+    /// xxHash64 checksum
+    pub checksum: u64,
+    /// Unix timestamp (milliseconds)
+    pub timestamp: i64,
+}
+
+/// Clipboard acknowledgment payload (JSON).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardAckPayload {
+    /// Whether the operation succeeded
+    pub success: bool,
+    /// Error message if failed
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Clipboard changed notification payload (JSON) - for sync mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClipboardChangedPayload {
+    /// Type of clipboard content
+    pub content_type: ClipboardContentType,
+    /// Size in bytes
+    pub size: u64,
+    /// xxHash64 checksum
+    pub checksum: u64,
+    /// Unix timestamp (milliseconds)
+    pub timestamp: i64,
 }
 
 /// Encode a message payload to JSON bytes.
@@ -486,7 +547,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_ping_pong_roundtrip() {
-        // Test Ping frame
         let mut buffer = Vec::new();
         write_frame(&mut buffer, MessageType::Ping, &[])
             .await
@@ -498,7 +558,6 @@ mod tests {
         assert_eq!(header.message_type, MessageType::Ping);
         assert!(payload.is_empty());
 
-        // Test Pong frame
         let mut buffer = Vec::new();
         write_frame(&mut buffer, MessageType::Pong, &[])
             .await
@@ -531,8 +590,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_read_frame_with_timeout_expires() {
-        // We need a stream that blocks forever, not one that returns EOF
-        // Use a never-ready stream to test timeout behavior
         struct NeverReadyReader;
 
         impl tokio::io::AsyncRead for NeverReadyReader {
@@ -551,7 +608,7 @@ mod tests {
         assert!(result.is_err());
         match result.unwrap_err() {
             crate::error::Error::Timeout(secs) => {
-                assert_eq!(secs, 0); // 50ms rounds to 0 seconds
+                assert_eq!(secs, 0);
             }
             e => panic!("Expected Timeout error, got: {e:?}"),
         }
@@ -572,7 +629,6 @@ mod tests {
 
         assert!(result.is_ok());
 
-        // Verify the frame was written correctly
         let mut cursor = std::io::Cursor::new(buffer);
         let (header, read_payload) = read_frame(&mut cursor).await.expect("read frame");
         assert_eq!(header.message_type, MessageType::Pong);

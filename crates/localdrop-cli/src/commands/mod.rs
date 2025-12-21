@@ -3,9 +3,11 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+pub mod clipboard;
 pub mod config;
 pub mod diagnose;
 pub mod history;
+pub mod internal;
 pub mod receive;
 pub mod scan;
 pub mod send;
@@ -36,6 +38,9 @@ pub enum Command {
     /// Send files to a trusted device (no code needed)
     Send(SendArgs),
 
+    /// Share and sync clipboard content
+    Clipboard(ClipboardArgs),
+
     /// Scan network for active shares
     Scan(ScanArgs),
 
@@ -53,6 +58,10 @@ pub enum Command {
 
     /// View transfer history
     History(HistoryArgs),
+
+    /// Internal: hold clipboard content (not user-facing, used by spawn)
+    #[command(hide = true)]
+    InternalClipboardHold(InternalClipboardHoldArgs),
 }
 
 /// Arguments for the share command
@@ -271,4 +280,71 @@ pub struct HistoryArgs {
     /// Output in JSON format
     #[arg(long)]
     pub json: bool,
+}
+
+/// Arguments for the clipboard command
+#[derive(Parser)]
+pub struct ClipboardArgs {
+    /// Clipboard subcommand
+    #[command(subcommand)]
+    pub action: ClipboardAction,
+
+    /// Minimal output
+    #[arg(short, long, global = true)]
+    pub quiet: bool,
+
+    /// Output in JSON format
+    #[arg(long, global = true)]
+    pub json: bool,
+}
+
+/// Clipboard subcommands
+#[derive(Subcommand)]
+pub enum ClipboardAction {
+    /// Share current clipboard content (one-shot)
+    Share(ClipboardShareArgs),
+
+    /// Receive clipboard content using a share code
+    Receive(ClipboardReceiveArgs),
+
+    /// Start bidirectional clipboard sync session
+    Sync(ClipboardSyncArgs),
+}
+
+/// Arguments for clipboard share
+#[derive(Parser)]
+pub struct ClipboardShareArgs {
+    /// Code expiration time (e.g., 5m, 10m, 30m)
+    #[arg(short, long, default_value = "5m")]
+    pub expire: String,
+}
+
+/// Arguments for clipboard receive
+#[derive(Parser)]
+pub struct ClipboardReceiveArgs {
+    /// Share code to connect to
+    pub code: String,
+
+    /// Non-interactive mode (auto-accept)
+    #[arg(long)]
+    pub batch: bool,
+}
+
+/// Arguments for clipboard sync
+#[derive(Parser)]
+pub struct ClipboardSyncArgs {
+    /// Share code to connect to (omit to host new session)
+    pub code: Option<String>,
+}
+
+/// Arguments for internal clipboard hold command (not user-facing)
+#[derive(Parser)]
+pub struct InternalClipboardHoldArgs {
+    /// Content type: "image" or "text"
+    #[arg(long)]
+    pub content_type: String,
+
+    /// Timeout in seconds before the holder exits
+    #[arg(long, default_value = "300")]
+    pub timeout: u64,
 }

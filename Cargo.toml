@@ -90,6 +90,16 @@ tempfile = "3"
 # Hostname detection
 hostname = "0.4"
 
+# Clipboard access (cross-platform)
+# wayland-data-control enables wlr-data-control protocol for Wayland clipboard access
+arboard = { version = "3", features = ["wayland-data-control"] }
+
+# Async stream utilities
+async-stream = "0.3"
+
+# POSIX utilities (for Linux clipboard holder)
+nix = { version = "0.29", features = ["process", "signal"] }
+
 # FFI (for future mobile bindings)
 # uniffi = "0.28"
 
