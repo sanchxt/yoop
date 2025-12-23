@@ -98,23 +98,41 @@ impl ClipboardWatcher {
                         break;
                     }
                     () = tokio::time::sleep(poll_interval) => {
-                        if let Ok(Some(content)) = clipboard.read() {
-                            let current_hash = content.hash();
-                            let stored_hash = last_hash.load(Ordering::SeqCst);
+                        match clipboard.read() {
+                            Ok(Some(content)) => {
+                                let current_hash = content.hash();
+                                let stored_hash = last_hash.load(Ordering::SeqCst);
 
-                            if current_hash != 0 && current_hash != stored_hash {
-                                last_hash.store(current_hash, Ordering::SeqCst);
+                                tracing::trace!(
+                                    "Clipboard poll: current_hash={}, stored_hash={}, type={:?}",
+                                    current_hash, stored_hash, content.content_type()
+                                );
 
-                                let change = ClipboardChange {
-                                    content,
-                                    hash: current_hash,
-                                    timestamp: chrono::Utc::now(),
-                                };
+                                if current_hash != 0 && current_hash != stored_hash {
+                                    tracing::info!(
+                                        "Clipboard change detected: {} -> {} ({:?}, {} bytes)",
+                                        stored_hash, current_hash, content.content_type(), content.size()
+                                    );
 
-                                if tx.send(change).await.is_err() {
-                                    tracing::debug!("Clipboard change receiver dropped");
-                                    break;
+                                    last_hash.store(current_hash, Ordering::SeqCst);
+
+                                    let change = ClipboardChange {
+                                        content,
+                                        hash: current_hash,
+                                        timestamp: chrono::Utc::now(),
+                                    };
+
+                                    if tx.send(change).await.is_err() {
+                                        tracing::debug!("Clipboard change receiver dropped");
+                                        break;
+                                    }
                                 }
+                            }
+                            Ok(None) => {
+                                tracing::trace!("Clipboard poll: empty clipboard");
+                            }
+                            Err(e) => {
+                                tracing::warn!("Clipboard poll: read error: {}", e);
                             }
                         }
                     }
