@@ -47,8 +47,10 @@ crossterm = "0.28"
 
 # Web server
 axum = "0.8"
+axum-extra = { version = "0.10", features = ["multipart"] }
 tower = "0.5"
-tower-http = { version = "0.6", features = ["cors", "fs"] }
+tower-http = { version = "0.6", features = ["cors", "fs", "limit"] }
+rust-embed = { version = "8", features = ["include-exclude"] }
 
 # Networking
 socket2 = { version = "0.5", features = ["all"] }
@@ -96,6 +98,12 @@ arboard = { version = "3", features = ["wayland-data-control"] }
 
 # Async stream utilities
 async-stream = "0.3"
+futures = "0.3"
+tokio-stream = "0.1"
+tokio-util = { version = "0.7", features = ["io"] }
+
+# Compression
+zip = { version = "2", default-features = false, features = ["deflate"] }
 
 # POSIX utilities (for Linux clipboard holder)
 nix = { version = "0.29", features = ["process", "signal"] }

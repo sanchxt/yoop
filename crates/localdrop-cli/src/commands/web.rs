@@ -24,7 +24,6 @@ pub async fn run(args: WebArgs) -> Result<()> {
 
     println!("  http://localhost:{}", args.port);
     if !args.localhost_only {
-        // TODO: Show actual network IP
         println!("  http://192.168.x.x:{} (for other devices)", args.port);
     }
 
@@ -36,12 +35,9 @@ pub async fn run(args: WebArgs) -> Result<()> {
     println!();
     println!("Press Ctrl+C to stop the server.");
 
-    let server = localdrop_core::web::WebServer::new(config);
+    let mut server = localdrop_core::web::WebServer::new(config);
     server.start().await?;
 
-    tokio::signal::ctrl_c().await?;
-
-    server.stop().await;
     println!();
     println!("Server stopped.");
 
