@@ -71,8 +71,15 @@ hostname = { workspace = true }
 
 # Web server (optional feature)
 axum = { workspace = true, optional = true }
+axum-extra = { workspace = true, optional = true }
 tower = { workspace = true, optional = true }
 tower-http = { workspace = true, optional = true }
+rust-embed = { workspace = true, optional = true }
+async-stream = { workspace = true, optional = true }
+futures = { workspace = true, optional = true }
+tokio-stream = { workspace = true, optional = true }
+tokio-util = { workspace = true, optional = true }
+zip = { workspace = true, optional = true }
 
 # Linux-specific dependencies for clipboard holder
 [target.'cfg(target_os = "linux")'.dependencies]
@@ -87,7 +94,7 @@ walkdir = { workspace = true }
 [features]
 default = ["mdns"]
 mdns = ["dep:mdns-sd", "dep:flume"]
-web = ["dep:axum", "dep:tower", "dep:tower-http"]
+web = ["dep:axum", "dep:axum-extra", "dep:tower", "dep:tower-http", "dep:rust-embed", "dep:async-stream", "dep:futures", "dep:tokio-stream", "dep:tokio-util", "dep:zip"]
 full = ["mdns", "web"]
 
 [lints]
