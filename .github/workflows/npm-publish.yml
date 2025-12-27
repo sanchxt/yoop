@@ -40,14 +40,14 @@ jobs:
             npm-suffix: linux-arm64-gnu
             cross: true
 
-          # macOS x64 (Intel)
-          - os: macos-13  # Intel runner
+          # macOS x64 (Intel) - cross-compile from ARM64 runner
+          - os: macos-latest
             target: x86_64-apple-darwin
             npm-suffix: darwin-x64
             cross: false
 
           # macOS ARM64 (Apple Silicon)
-          - os: macos-14  # ARM64 runner
+          - os: macos-latest
             target: aarch64-apple-darwin
             npm-suffix: darwin-arm64
             cross: false
