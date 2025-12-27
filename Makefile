@@ -1,6 +1,3 @@
-# LocalDrop Makefile
-# Common development commands
-
 .PHONY: all build release test lint fmt check clean doc install help
 
 # Default target
@@ -47,15 +44,15 @@ doc:
 
 # Install the CLI locally
 install:
-	cargo install --path crates/localdrop-cli
+	cargo install --path crates/yoop-cli
 
 # Run the CLI in development
 run:
-	cargo run --package localdrop -- $(ARGS)
+	cargo run --package yoop -- $(ARGS)
 
 # Run with release optimizations
 run-release:
-	cargo run --release --package localdrop -- $(ARGS)
+	cargo run --release --package yoop -- $(ARGS)
 
 # Setup development environment
 setup:
@@ -70,7 +67,7 @@ watch:
 
 # Show help
 help:
-	@echo "LocalDrop Development Commands"
+	@echo "Yoop Development Commands"
 	@echo ""
 	@echo "Usage: make [target]"
 	@echo ""

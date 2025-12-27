@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Yoop</title>
+        <link rel="stylesheet" href="/style.css" />
+    </head>
+    <body>
+        <div id="app">
+            <header>
+                <h1>Yoop</h1>
+                <span id="device-name"></span>
+            </header>
+
+            <nav id="mode-selector">
+                <button id="btn-share" class="mode-btn active">Share</button>
+                <button id="btn-receive" class="mode-btn">Receive</button>
+            </nav>
+
+            <main>
+                <section id="share-panel" class="panel">
+                    <div id="drop-zone">
+                        <p>Drop files here or click to browse</p>
+                        <input type="file" id="file-input" multiple hidden />
+                    </div>
+
+                    <div id="selected-files" hidden>
+                        <h3>Selected Files</h3>
+                        <ul id="file-list"></ul>
+                        <p id="total-size"></p>
+                        <button id="btn-start-share" class="primary">
+                            Share Files
+                        </button>
+                        <button id="btn-clear-files" class="secondary">
+                            Clear
+                        </button>
+                    </div>
+
+                    <div id="share-code-display" hidden>
+                        <div class="code-box">
+                            <span class="code" id="share-code"></span>
+                        </div>
+                        <p id="share-expires">
+                            Expires in <span id="expire-time"></span>
+                        </p>
+                        <p id="share-status">Waiting for receiver...</p>
+                        <button id="btn-cancel-share" class="secondary">
+                            Cancel
+                        </button>
+                    </div>
+                </section>
+
+                <section id="receive-panel" class="panel" hidden>
+                    <div id="code-input-section">
+                        <label for="code-input">Enter share code:</label>
+                        <input
+                            type="text"
+                            id="code-input"
+                            placeholder="XXXX"
+                            maxlength="4"
+                            autocomplete="off"
+                            autocapitalize="characters"
+                        />
+                        <button id="btn-connect" class="primary">
+                            Connect
+                        </button>
+                    </div>
+
+                    <div id="incoming-transfer" hidden>
+                        <h3>Incoming from <span id="sender-name"></span></h3>
+                        <ul id="incoming-files"></ul>
+                        <p class="total">
+                            Total: <span id="incoming-size"></span>
+                        </p>
+                        <div class="actions">
+                            <button id="btn-accept" class="primary">
+                                Accept
+                            </button>
+                            <button id="btn-decline" class="secondary">
+                                Decline
+                            </button>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="progress-panel" class="panel" hidden>
+                    <h3 id="progress-title">Transferring...</h3>
+                    <p id="progress-file"></p>
+                    <div class="progress-bar">
+                        <div id="progress-fill"></div>
+                    </div>
+                    <div class="progress-stats">
+                        <span id="progress-percent">0%</span>
+                        <span id="progress-speed"></span>
+                        <span id="progress-eta"></span>
+                    </div>
+                </section>
+
+                <section id="complete-panel" class="panel" hidden>
+                    <h3>Transfer Complete!</h3>
+                    <p id="complete-summary"></p>
+                    <button id="btn-download" class="primary" hidden>
+                        Download Files
+                    </button>
+                    <button id="btn-new-transfer" class="secondary">
+                        New Transfer
+                    </button>
+                </section>
+
+                <section id="error-panel" class="panel" hidden>
+                    <h3>Error</h3>
+                    <p id="error-message"></p>
+                    <button id="btn-dismiss-error" class="secondary">
+                        Dismiss
+                    </button>
+                </section>
+            </main>
+
+            <footer>
+                <p>All transfers stay on your local network</p>
+            </footer>
+        </div>
+
+        <script src="/app.js"></script>
+    </body>
+</html>

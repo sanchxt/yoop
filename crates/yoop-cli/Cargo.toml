@@ -1,0 +1,51 @@
+[package]
+name = "yoop"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+description = "Cross-platform local network file sharing CLI"
+readme = "../../README.md"
+keywords = ["file-sharing", "lan", "transfer", "local-network", "cli"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "yoop"
+path = "src/main.rs"
+
+[dependencies]
+yoop-core = { path = "../yoop-core", features = ["full"] }
+
+# CLI
+clap = { workspace = true }
+
+# TUI
+ratatui = { workspace = true }
+crossterm = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+# Serialization (for --json output)
+serde_json = { workspace = true }
+
+# UUID
+uuid = { workspace = true }
+
+# Clipboard (for internal holder command)
+arboard = { workspace = true }
+image = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

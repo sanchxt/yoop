@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
--   **Transfer resume functionality** (localdrop-core)
+-   **Transfer resume functionality** (yoop-core)
 
     -   Persistent state management for interrupted transfers
     -   Resume from last successful chunk
@@ -18,15 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   Cross-platform file permissions and symlink handling
     -   Comprehensive resume tests
 
--   **mDNS/DNS-SD discovery** (localdrop-core)
+-   **mDNS/DNS-SD discovery** (yoop-core)
 
-    -   Service discovery via mDNS on `_localdrop._tcp.local`
+    -   Service discovery via mDNS on `_yoop._tcp.local`
     -   Hybrid discovery combining UDP broadcast and mDNS
     -   Automatic fallback between discovery methods
     -   Proper mDNS daemon lifecycle management
     -   Cross-platform service advertising
 
--   **Trusted device transfers** (localdrop-core)
+-   **Trusted device transfers** (yoop-core)
 
     -   Device identity with Ed25519 keypair generation and storage
     -   Beacon discovery system for trusted device detection
@@ -36,14 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   Device identity exchange during regular transfers
     -   Trust levels: Full (auto-accept) and AskEachTime (confirm each transfer)
 
--   **History module** (localdrop-core)
+-   **History module** (yoop-core)
 
     -   SQLite-based transfer history storage
     -   Track sent and received files with timestamps, sizes, and peer info
     -   Automatic cleanup of old entries (configurable retention)
     -   Query API for recent transfers and statistics
 
--   **Web interface** (localdrop-core)
+-   **Web interface** (yoop-core)
 
     -   Full-featured web UI for file sharing and receiving
     -   Server-sent events (SSE) for real-time progress updates
@@ -53,7 +53,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   Active share listing and management
     -   Localhost-only mode for security
 
--   **Clipboard sharing module** (localdrop-core)
+-   **Clipboard sharing module** (yoop-core)
 
     -   `ClipboardContent` type supporting text and PNG images
     -   `ClipboardMetadata` for content type, size, and checksum
@@ -66,7 +66,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   xxHash64 content hashing for efficient change detection
     -   Linux clipboard holder subprocess for ownership persistence
 
--   **CLI commands** (localdrop-cli)
+-   **CLI commands** (yoop-cli)
 
     -   **clipboard**: Full clipboard sharing implementation
         -   `share` - Share current clipboard content with a code
@@ -108,7 +108,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         -   Set trust level (full or ask_each_time)
         -   Integration with device identity system
 
--   **UI improvements** (localdrop-cli)
+-   **UI improvements** (yoop-cli)
     -   Centered Unicode box for share code display
     -   Live countdown timer for code expiration
     -   Progress indicators for clipboard operations
@@ -132,7 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-#### Core Library (localdrop-core)
+#### Core Library (yoop-core)
 
 -   **Discovery module**: UDP broadcast-based network discovery with collision detection
     -   Broadcasting on port 52525 with configurable intervals
@@ -147,7 +147,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   Receive session with preview and acceptance flow
     -   Multi-file transfer support
     -   Transfer state machine (Waiting, Connected, Transferring, Completed, etc.)
--   **Protocol module**: LDRP (LocalDrop Protocol) wire format implementation
+-   **Protocol module**: LDRP (Yoop Protocol) wire format implementation
     -   Binary frame format with magic bytes, version, type, and length
     -   Message types: HELLO, FILE_LIST, CHUNK_DATA, CHUNK_ACK, etc.
     -   Efficient chunk data encoding/decoding
@@ -186,7 +186,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     -   Configuration structure
     -   API endpoint planning (TODO)
 
-#### CLI Application (localdrop)
+#### CLI Application (yoop)
 
 -   **Command structure**: Comprehensive CLI using clap
     -   `share` - Share files and directories with progress display
@@ -224,7 +224,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 #### Infrastructure
 
--   **Cargo workspace**: Multi-crate structure with localdrop-core and localdrop-cli
+-   **Cargo workspace**: Multi-crate structure with yoop-core and yoop-cli
 -   **GitHub Actions CI**:
     -   Format checking (rustfmt)
     -   Linting (clippy with -D warnings)

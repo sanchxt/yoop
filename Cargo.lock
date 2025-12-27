@@ -1336,72 +1336,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df1d3c3b53da64cf5760482273a98e575c651a67eec7f77df96b5b642de8f039"
 
 [[package]]
-name = "localdrop"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arboard",
- "clap",
- "crossterm",
- "image",
- "localdrop-core",
- "ratatui",
- "serde_json",
- "tempfile",
- "tokio",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
-name = "localdrop-core"
-version = "0.1.0"
-dependencies = [
- "arboard",
- "async-stream",
- "axum",
- "axum-extra",
- "base64",
- "chrono",
- "directories",
- "ed25519-dalek",
- "flume",
- "futures",
- "hmac",
- "hostname",
- "image",
- "mdns-sd",
- "mime_guess",
- "nix",
- "qrcode",
- "rand",
- "rcgen",
- "rust-embed",
- "rustls",
- "rustls-pemfile",
- "serde",
- "serde_json",
- "sha2",
- "socket2 0.5.10",
- "tempfile",
- "thiserror 2.0.17",
- "tokio",
- "tokio-rustls",
- "tokio-stream",
- "tokio-util",
- "toml",
- "tower",
- "tower-http",
- "tracing",
- "uuid",
- "walkdir",
- "x25519-dalek",
- "xxhash-rust",
- "zip",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3342,6 +3276,72 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e17bb3549cc1321ae1296b9cdc2698e2b6cb1992adfa19a8c72e5b7a738f44cd"
 dependencies = [
  "time",
+]
+
+[[package]]
+name = "yoop"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "arboard",
+ "clap",
+ "crossterm",
+ "image",
+ "ratatui",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+ "yoop-core",
+]
+
+[[package]]
+name = "yoop-core"
+version = "0.1.0"
+dependencies = [
+ "arboard",
+ "async-stream",
+ "axum",
+ "axum-extra",
+ "base64",
+ "chrono",
+ "directories",
+ "ed25519-dalek",
+ "flume",
+ "futures",
+ "hmac",
+ "hostname",
+ "image",
+ "mdns-sd",
+ "mime_guess",
+ "nix",
+ "qrcode",
+ "rand",
+ "rcgen",
+ "rust-embed",
+ "rustls",
+ "rustls-pemfile",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2 0.5.10",
+ "tempfile",
+ "thiserror 2.0.17",
+ "tokio",
+ "tokio-rustls",
+ "tokio-stream",
+ "tokio-util",
+ "toml",
+ "tower",
+ "tower-http",
+ "tracing",
+ "uuid",
+ "walkdir",
+ "x25519-dalek",
+ "xxhash-rust",
+ "zip",
 ]
 
 [[package]]

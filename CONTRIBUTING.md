@@ -1,6 +1,6 @@
-# Contributing to LocalDrop
+# Contributing to Yoop
 
-Thank you for your interest in contributing to LocalDrop <3
+Thank you for your interest in contributing to Yoop <3
 This document provides guidelines and instructions for contributing.
 
 ## Code of Conduct
@@ -13,8 +13,8 @@ Please be respectful and constructive in all interactions. We're building someth
 2. Clone your fork:
 
     ```bash
-    git clone https://github.com/your-username/localdrop
-    cd localdrop
+    git clone https://github.com/your-username/yoop
+    cd yoop
     ```
 
 3. Create a branch for your changes:
@@ -150,7 +150,7 @@ When reporting bugs, please include:
 2. **Steps to reproduce**: Minimal steps to reproduce
 3. **Expected behavior**: What you expected to happen
 4. **Actual behavior**: What actually happened
-5. **Environment**: OS, Rust version, LocalDrop version
+5. **Environment**: OS, Rust version, Yoop version
 6. **Logs**: Any relevant error messages or logs
 
 ## Feature Requests
@@ -169,4 +169,4 @@ Feature requests are welcome! Please:
 
 ## License
 
-By contributing to LocalDrop, you agree that your contributions will be licensed under the MIT OR Apache-2.0 license.
+By contributing to Yoop, you agree that your contributions will be licensed under the MIT OR Apache-2.0 license.

@@ -53,5 +53,5 @@ CLA*.md
 *.tmp
 *.temp
 
-# LocalDrop specific
-*.localdrop-resume
+# Yoop specific
+*.yoop-resume

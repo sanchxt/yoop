@@ -1,6 +1,6 @@
 # Integration Tests
 
-This directory contains integration tests for LocalDrop.
+This directory contains integration tests for Yoop.
 
 ## Running Tests
 

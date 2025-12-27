@@ -1,12 +1,12 @@
-# LocalDrop
+# Yoop
 
 **Cross-Platform Local Network File Sharing**
 
-[![CI](https://github.com/arceus/localdrop/workflows/CI/badge.svg)](https://github.com/arceus/localdrop/actions)
+[![CI](https://github.com/arceus/yoop/workflows/CI/badge.svg)](https://github.com/arceus/yoop/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust Version](https://img.shields.io/badge/rust-1.86.0%2B-blue.svg)](https://www.rust-lang.org)
 
-LocalDrop enables seamless peer-to-peer file transfers over local networks using simple, time-limited codes. Unlike cloud-based solutions, all data stays on your local network, ensuring privacy, speed, and zero bandwidth costs.
+Yoop enables seamless peer-to-peer file transfers over local networks using simple, time-limited codes. Unlike cloud-based solutions, all data stays on your local network, ensuring privacy, speed, and zero bandwidth costs.
 
 ## Features
 
@@ -29,42 +29,42 @@ LocalDrop enables seamless peer-to-peer file transfers over local networks using
 
 ```bash
 # Share a single file
-localdrop share document.pdf
+yoop share document.pdf
 
 # Share multiple files and folders
-localdrop share photos/ videos/ notes.md
+yoop share photos/ videos/ notes.md
 
 # Share with custom expiration
-localdrop share project.zip --expire 10m
+yoop share project.zip --expire 10m
 ```
 
 ### Receive Files
 
 ```bash
 # Receive using the 4-character code
-localdrop receive A7K9
+yoop receive A7K9
 
 # Receive to specific directory
-localdrop receive A7K9 --output ~/Downloads/
+yoop receive A7K9 --output ~/Downloads/
 
 # Batch mode (auto-accept)
-localdrop receive A7K9 --batch
+yoop receive A7K9 --batch
 ```
 
 ### Clipboard Sharing
 
 ```bash
 # Share current clipboard content (generates a code)
-localdrop clipboard share
+yoop clipboard share
 
 # Receive clipboard content using a code
-localdrop clipboard receive A7K9
+yoop clipboard receive A7K9
 
 # Start bidirectional clipboard sync (host)
-localdrop clipboard sync
+yoop clipboard sync
 
 # Join existing sync session
-localdrop clipboard sync A7K9
+yoop clipboard sync A7K9
 ```
 
 ## Installation
@@ -74,9 +74,9 @@ localdrop clipboard sync A7K9
 Requires **Rust 1.86.0** or later.
 
 ```bash
-git clone https://github.com/arceus/localdrop
-cd localdrop
-cargo install --path crates/localdrop-cli
+git clone https://github.com/arceus/yoop
+cd yoop
+cargo install --path crates/yoop-cli
 ```
 
 ### Pre-built Binaries
@@ -105,33 +105,33 @@ Pre-built binaries and package manager support are planned for future releases.
 
 ```bash
 # Sharing & Receiving
-localdrop share <files...>           # Share files/folders
-localdrop receive <code>             # Receive with code
+yoop share <files...>           # Share files/folders
+yoop receive <code>             # Receive with code
 
 # Clipboard Sharing
-localdrop clipboard share            # Share clipboard content
-localdrop clipboard receive <code>   # Receive clipboard content
-localdrop clipboard sync [code]      # Bidirectional clipboard sync
+yoop clipboard share            # Share clipboard content
+yoop clipboard receive <code>   # Receive clipboard content
+yoop clipboard sync [code]      # Bidirectional clipboard sync
 
 # Utilities
-localdrop scan                       # Scan for active shares on network
-localdrop web                        # Start web interface
-localdrop config                     # Manage configuration
-localdrop diagnose                   # Network diagnostics
-localdrop history                    # View transfer history
+yoop scan                       # Scan for active shares on network
+yoop web                        # Start web interface
+yoop config                     # Manage configuration
+yoop diagnose                   # Network diagnostics
+yoop history                    # View transfer history
 
 # Planned Features
-localdrop send <device> <files>      # Send to trusted device (in development)
-localdrop trust list                 # Manage trusted devices (in development)
+yoop send <device> <files>      # Send to trusted device (in development)
+yoop trust list                 # Manage trusted devices (in development)
 ```
 
 ## Configuration
 
-LocalDrop can be configured via TOML files:
+Yoop can be configured via TOML files:
 
--   **Linux**: `~/.config/localdrop/config.toml`
--   **macOS**: `~/Library/Application Support/LocalDrop/config.toml`
--   **Windows**: `%APPDATA%\LocalDrop\config.toml`
+-   **Linux**: `~/.config/yoop/config.toml`
+-   **macOS**: `~/Library/Application Support/yoop/config.toml`
+-   **Windows**: `%APPDATA%\yoop\config.toml`
 
 Example configuration:
 
@@ -165,8 +165,8 @@ rate_limit_attempts = 3
 
 ```bash
 # Clone repository
-git clone https://github.com/arceus/localdrop
-cd localdrop
+git clone https://github.com/arceus/yoop
+cd yoop
 
 # Build all crates
 cargo build --workspace
@@ -175,7 +175,7 @@ cargo build --workspace
 cargo test --workspace
 
 # Run with logging
-RUST_LOG=debug cargo run --bin localdrop -- share test.txt
+RUST_LOG=debug cargo run --bin yoop -- share test.txt
 ```
 
 ### Running Tests
@@ -209,7 +209,7 @@ cargo check --workspace
 
 ## Architecture
 
-LocalDrop uses a custom binary protocol (LDRP) over TLS 1.3:
+Yoop uses a custom binary protocol (LDRP) over TLS 1.3:
 
 -   **Discovery**: UDP broadcast + mDNS/DNS-SD on port 52525
 -   **Transfer**: TCP on ports 52530-52540
@@ -220,7 +220,7 @@ LocalDrop uses a custom binary protocol (LDRP) over TLS 1.3:
 
 ## Security
 
-LocalDrop prioritizes security and privacy:
+Yoop prioritizes security and privacy:
 
 -   **Encryption**: All transfers use TLS 1.3 with perfect forward secrecy
 -   **No persistence**: Ephemeral certificates, no long-term keys (except trusted devices)
