@@ -1,0 +1,15 @@
+{
+  "name": "@sanchxt/yoop-linux-arm64-gnu",
+  "version": "0.1.0",
+  "description": "Yoop binary for Linux ARM64 (glibc)",
+  "os": ["linux"],
+  "cpu": ["arm64"],
+  "files": ["bin/yoop"],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sanchxt/yoop.git"
+  },
+  "homepage": "https://github.com/sanchxt/yoop",
+  "license": "MIT OR Apache-2.0",
+  "preferUnplugged": true
+}

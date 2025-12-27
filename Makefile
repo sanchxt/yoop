@@ -1,4 +1,5 @@
-.PHONY: all build release test lint fmt check clean doc install help
+.PHONY: all build release test lint fmt check clean doc install help \
+       npm-build npm-build-native npm-publish npm-dry-run sync-versions
 
 # Default target
 all: check
@@ -72,20 +73,52 @@ help:
 	@echo "Usage: make [target]"
 	@echo ""
 	@echo "Targets:"
-	@echo "  all          Run all checks (default)"
-	@echo "  build        Build debug version"
-	@echo "  release      Build release version"
-	@echo "  test         Run all tests"
-	@echo "  test-verbose Run tests with output"
-	@echo "  lint         Run clippy linter"
-	@echo "  fmt          Format code"
-	@echo "  fmt-check    Check formatting"
-	@echo "  check        Run all checks (fmt, lint, test)"
-	@echo "  clean        Clean build artifacts"
-	@echo "  doc          Generate and open documentation"
-	@echo "  install      Install CLI locally"
-	@echo "  run          Run CLI (use ARGS='...' for arguments)"
-	@echo "  run-release  Run CLI in release mode"
-	@echo "  setup        Setup development environment"
-	@echo "  watch        Watch for changes and run tests"
-	@echo "  help         Show this help"
+	@echo "  all            Run all checks (default)"
+	@echo "  build          Build debug version"
+	@echo "  release        Build release version"
+	@echo "  test           Run all tests"
+	@echo "  test-verbose   Run tests with output"
+	@echo "  lint           Run clippy linter"
+	@echo "  fmt            Format code"
+	@echo "  fmt-check      Check formatting"
+	@echo "  check          Run all checks (fmt, lint, test)"
+	@echo "  clean          Clean build artifacts"
+	@echo "  doc            Generate and open documentation"
+	@echo "  install        Install CLI locally"
+	@echo "  run            Run CLI (use ARGS='...' for arguments)"
+	@echo "  run-release    Run CLI in release mode"
+	@echo "  setup          Setup development environment"
+	@echo "  watch          Watch for changes and run tests"
+	@echo ""
+	@echo "npm Targets:"
+	@echo "  npm-build        Build npm packages for all platforms (requires Docker)"
+	@echo "  npm-build-native Build npm package for current platform only"
+	@echo "  npm-publish      Publish to npm registry"
+	@echo "  npm-dry-run      Test npm publish without actually publishing"
+	@echo "  sync-versions    Sync npm package versions with Cargo.toml"
+	@echo ""
+	@echo "  help           Show this help"
+
+# ============================================================================
+# npm Package Targets
+# ============================================================================
+
+# Build npm packages for all platforms (requires Docker + cross)
+npm-build:
+	./scripts/build-npm.sh
+
+# Build npm package for current platform only (no Docker needed)
+npm-build-native:
+	./scripts/build-npm.sh --native
+
+# Publish to npm registry
+npm-publish:
+	./scripts/publish-npm.sh
+
+# Test npm publish without actually publishing
+npm-dry-run:
+	./scripts/publish-npm.sh --dry-run
+
+# Sync npm package versions with Cargo.toml
+sync-versions:
+	node scripts/sync-versions.js

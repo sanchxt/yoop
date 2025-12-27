@@ -1,0 +1,43 @@
+{
+  "name": "yoop",
+  "version": "0.1.0",
+  "description": "Cross-platform local network file sharing - transfer files between devices on the same network using simple codes",
+  "bin": {
+    "yoop": "bin.js"
+  },
+  "main": "bin.js",
+  "files": [
+    "bin.js"
+  ],
+  "keywords": [
+    "file-sharing",
+    "local-network",
+    "file-transfer",
+    "lan",
+    "airdrop",
+    "cross-platform",
+    "p2p",
+    "cli"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/sanchxt/yoop.git"
+  },
+  "homepage": "https://github.com/sanchxt/yoop#readme",
+  "bugs": {
+    "url": "https://github.com/sanchxt/yoop/issues"
+  },
+  "author": "sanchxt",
+  "license": "MIT OR Apache-2.0",
+  "engines": {
+    "node": ">=16"
+  },
+  "optionalDependencies": {
+    "@sanchxt/yoop-linux-x64-gnu": "0.1.0",
+    "@sanchxt/yoop-linux-x64-musl": "0.1.0",
+    "@sanchxt/yoop-linux-arm64-gnu": "0.1.0",
+    "@sanchxt/yoop-darwin-x64": "0.1.0",
+    "@sanchxt/yoop-darwin-arm64": "0.1.0",
+    "@sanchxt/yoop-win32-x64-msvc": "0.1.0"
+  }
+}

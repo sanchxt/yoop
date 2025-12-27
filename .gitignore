@@ -55,3 +55,7 @@ CLA*.md
 
 # Yoop specific
 *.yoop-resume
+
+# npm package binaries (generated during build, not committed)
+npm/**/bin/
+npm/**/node_modules/

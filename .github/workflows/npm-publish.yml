@@ -1,0 +1,198 @@
+name: Publish npm packages
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Dry run (skip actual publish)'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-binaries:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Linux x64 (glibc)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            npm-suffix: linux-x64-gnu
+            cross: false
+
+          # Linux x64 (musl)
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            npm-suffix: linux-x64-musl
+            cross: true
+
+          # Linux ARM64
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            npm-suffix: linux-arm64-gnu
+            cross: true
+
+          # macOS x64 (Intel)
+          - os: macos-13  # Intel runner
+            target: x86_64-apple-darwin
+            npm-suffix: darwin-x64
+            cross: false
+
+          # macOS ARM64 (Apple Silicon)
+          - os: macos-14  # ARM64 runner
+            target: aarch64-apple-darwin
+            npm-suffix: darwin-arm64
+            cross: false
+
+          # Windows x64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            npm-suffix: win32-x64-msvc
+            cross: false
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Install cross
+        if: matrix.cross
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cross
+
+      - name: Build binary (cargo)
+        if: ${{ !matrix.cross }}
+        run: cargo build --release --target ${{ matrix.target }} -p yoop
+
+      - name: Build binary (cross)
+        if: matrix.cross
+        run: cross build --release --target ${{ matrix.target }} -p yoop
+
+      - name: Prepare artifact (Unix)
+        if: runner.os != 'Windows'
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/yoop artifacts/
+          chmod +x artifacts/yoop
+
+      - name: Prepare artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          mkdir -p artifacts
+          cp target/${{ matrix.target }}/release/yoop.exe artifacts/
+        shell: bash
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: binary-${{ matrix.npm-suffix }}
+          path: artifacts/
+          if-no-files-found: error
+
+  publish-npm:
+    name: Publish to npm
+    needs: build-binaries
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write  # For npm provenance
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Sync versions
+        run: node scripts/sync-versions.js
+
+      - name: Copy binaries to npm packages
+        run: |
+          # Linux x64 (glibc)
+          mkdir -p npm/@sanchxt/yoop-linux-x64-gnu/bin
+          cp artifacts/binary-linux-x64-gnu/yoop npm/@sanchxt/yoop-linux-x64-gnu/bin/
+          chmod +x npm/@sanchxt/yoop-linux-x64-gnu/bin/yoop
+
+          # Linux x64 (musl)
+          mkdir -p npm/@sanchxt/yoop-linux-x64-musl/bin
+          cp artifacts/binary-linux-x64-musl/yoop npm/@sanchxt/yoop-linux-x64-musl/bin/
+          chmod +x npm/@sanchxt/yoop-linux-x64-musl/bin/yoop
+
+          # Linux ARM64
+          mkdir -p npm/@sanchxt/yoop-linux-arm64-gnu/bin
+          cp artifacts/binary-linux-arm64-gnu/yoop npm/@sanchxt/yoop-linux-arm64-gnu/bin/
+          chmod +x npm/@sanchxt/yoop-linux-arm64-gnu/bin/yoop
+
+          # macOS x64
+          mkdir -p npm/@sanchxt/yoop-darwin-x64/bin
+          cp artifacts/binary-darwin-x64/yoop npm/@sanchxt/yoop-darwin-x64/bin/
+          chmod +x npm/@sanchxt/yoop-darwin-x64/bin/yoop
+
+          # macOS ARM64
+          mkdir -p npm/@sanchxt/yoop-darwin-arm64/bin
+          cp artifacts/binary-darwin-arm64/yoop npm/@sanchxt/yoop-darwin-arm64/bin/
+          chmod +x npm/@sanchxt/yoop-darwin-arm64/bin/yoop
+
+          # Windows x64
+          mkdir -p npm/@sanchxt/yoop-win32-x64-msvc/bin
+          cp artifacts/binary-win32-x64-msvc/yoop.exe npm/@sanchxt/yoop-win32-x64-msvc/bin/
+
+      - name: Publish platform packages
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          # Publish all platform packages in parallel
+          for pkg in npm/@sanchxt/yoop-*; do
+            echo "Publishing $(basename $pkg)..."
+            cd "$pkg"
+            npm publish --access public --provenance
+            cd - > /dev/null
+          done
+
+      - name: Wait for registry propagation
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        run: sleep 15
+
+      - name: Publish main package
+        if: ${{ github.event.inputs.dry_run != 'true' }}
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        working-directory: npm/yoop
+        run: npm publish --access public --provenance
+
+      - name: Dry run - show what would be published
+        if: ${{ github.event.inputs.dry_run == 'true' }}
+        run: |
+          echo "=== DRY RUN - Would publish: ==="
+          echo ""
+          for pkg in npm/@sanchxt/yoop-*; do
+            echo "Package: $(basename $pkg)"
+            cat "$pkg/package.json" | grep -E '"(name|version)"'
+            ls -la "$pkg/bin/" 2>/dev/null || echo "  (no binary yet)"
+            echo ""
+          done
+          echo "Main package: yoop"
+          cat npm/yoop/package.json | grep -E '"(name|version)"'

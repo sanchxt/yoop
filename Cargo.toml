@@ -128,9 +128,11 @@ missing_errors_doc = "allow"
 missing_panics_doc = "allow"
 
 [profile.release]
+opt-level = "z"       # Optimize for size
 lto = true
 codegen-units = 1
 strip = true
+panic = "abort"       # Smaller binary, no unwinding
 
 [profile.dev]
 # Faster builds in dev
