@@ -164,11 +164,24 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          # Publish all platform packages in parallel
+          # Publish all platform packages (skip if already published)
           for pkg in npm/@sanchxt/yoop-*; do
-            echo "Publishing $(basename $pkg)..."
+            pkg_name=$(basename $pkg)
+            echo "Publishing $pkg_name..."
             cd "$pkg"
-            npm publish --access public --provenance
+
+            # Try to publish, capture output
+            if output=$(npm publish --access public --provenance 2>&1); then
+              echo "  Published successfully"
+            else
+              if echo "$output" | grep -q "cannot publish over"; then
+                echo "  Already published, skipping..."
+              else
+                echo "$output"
+                exit 1
+              fi
+            fi
+
             cd - > /dev/null
           done
 
@@ -181,7 +194,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         working-directory: npm/yoop
-        run: npm publish --access public --provenance
+        run: |
+          echo "Publishing yoop..."
+          if output=$(npm publish --access public --provenance 2>&1); then
+            echo "Published successfully!"
+          else
+            if echo "$output" | grep -q "cannot publish over"; then
+              echo "Already published, skipping..."
+            else
+              echo "$output"
+              exit 1
+            fi
+          fi
 
       - name: Dry run - show what would be published
         if: ${{ github.event.inputs.dry_run == 'true' }}
