@@ -8,7 +8,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use localdrop_core::config::TrustLevel;
+use localdrop_core::config::{CompressionMode, TrustLevel};
 use localdrop_core::file::format_size;
 use localdrop_core::history::{
     HistoryFileEntry, HistoryStore, TransferDirection, TransferHistoryEntry,
@@ -22,8 +22,20 @@ use crate::ui::{format_remaining, parse_duration, CodeBox};
 
 /// Run the share command.
 pub async fn run(args: ShareArgs) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
+    // Resolve compression: CLI flag or config default
+    let compress =
+        args.compress || matches!(global_config.transfer.compression, CompressionMode::Always);
+
+    // Create transfer config using global config values
     let config = TransferConfig {
-        compress: args.compress,
+        compress,
+        chunk_size: global_config.transfer.chunk_size,
+        parallel_streams: global_config.transfer.parallel_chunks,
+        verify_checksums: global_config.transfer.verify_checksum,
+        discovery_port: global_config.network.port,
         ..Default::default()
     };
 
@@ -43,7 +55,9 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     display_share_info(&files, total_size, &code, &args)?;
 
     let progress_rx = session.progress();
-    let expire_duration = parse_duration(&args.expire);
+    // Parse expire duration from CLI arg, fall back to config default
+    let expire_duration =
+        parse_duration(&args.expire).or(Some(global_config.general.default_expire));
     let start_time = Instant::now();
 
     let progress_handle = if !args.quiet && !args.json {
@@ -79,6 +93,7 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         receiver_name.as_deref(),
         receiver_device_id,
         receiver_public_key.as_deref(),
+        global_config.trust.auto_prompt,
     )
     .await
 }
@@ -137,6 +152,7 @@ async fn handle_transfer_result(
     receiver_name: Option<&str>,
     receiver_device_id: Option<Uuid>,
     receiver_public_key: Option<&str>,
+    trust_auto_prompt: bool,
 ) -> Result<()> {
     match result {
         Ok(()) => {
@@ -154,9 +170,11 @@ async fn handle_transfer_result(
                 println!("  Transfer complete!");
                 println!();
 
-                // Prompt to trust receiver if they provided identity info
-                if let Some(name) = receiver_name {
-                    prompt_trust_device(name, receiver_device_id, receiver_public_key).await;
+                // Prompt to trust receiver if enabled in config and they provided identity info
+                if trust_auto_prompt {
+                    if let Some(name) = receiver_name {
+                        prompt_trust_device(name, receiver_device_id, receiver_public_key).await;
+                    }
                 }
             }
             if args.json {

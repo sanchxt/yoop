@@ -23,6 +23,9 @@ use super::ReceiveArgs;
 /// Run the receive command.
 #[allow(clippy::too_many_lines)]
 pub async fn run(args: ReceiveArgs) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     let code = localdrop_core::code::ShareCode::parse(&args.code)?;
 
     if !args.quiet && !args.json {
@@ -42,9 +45,20 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
-    let output_dir = args.output.unwrap_or_else(|| PathBuf::from("."));
+    // Resolve output directory: CLI arg -> config default -> current dir
+    let output_dir = args
+        .output
+        .or_else(|| global_config.general.default_output.clone())
+        .unwrap_or_else(|| PathBuf::from("."));
 
-    let config = TransferConfig::default();
+    // Create transfer config using global config values
+    let config = TransferConfig {
+        chunk_size: global_config.transfer.chunk_size,
+        parallel_streams: global_config.transfer.parallel_chunks,
+        verify_checksums: global_config.transfer.verify_checksum,
+        discovery_port: global_config.network.port,
+        ..Default::default()
+    };
 
     let mut session = ReceiveSession::connect(&code, output_dir.clone(), config).await?;
 
@@ -161,8 +175,8 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 println!("  Files saved to: {}", output_dir.display());
                 println!();
 
-                // Prompt to trust sender if they provided identity info
-                if !args.batch {
+                // Prompt to trust sender if enabled in config and they provided identity info
+                if !args.batch && global_config.trust.auto_prompt {
                     prompt_trust_device(
                         &sender_name,
                         sender_device_id,

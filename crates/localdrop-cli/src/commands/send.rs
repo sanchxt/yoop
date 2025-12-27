@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use tokio::sync::watch;
 
-use localdrop_core::config::TrustLevel;
+use localdrop_core::config::{CompressionMode, TrustLevel};
 use localdrop_core::crypto::DeviceIdentity;
 use localdrop_core::file::format_size;
 use localdrop_core::history::{
@@ -26,6 +26,9 @@ use super::SendArgs;
 /// Run the send command.
 #[allow(clippy::too_many_lines)]
 pub async fn run(args: SendArgs) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     // Load trust store and find device
     let trust_store = TrustStore::load().context("Failed to load trust store")?;
 
@@ -37,9 +40,17 @@ pub async fn run(args: SendArgs) -> Result<()> {
     // Load device identity
     let identity = DeviceIdentity::load_or_generate().context("Failed to load device identity")?;
 
-    // Create transfer config
+    // Resolve compression: CLI flag or config default
+    let compress =
+        args.compress || matches!(global_config.transfer.compression, CompressionMode::Always);
+
+    // Create transfer config using global config values
     let config = TransferConfig {
-        compress: args.compress,
+        compress,
+        chunk_size: global_config.transfer.chunk_size,
+        parallel_streams: global_config.transfer.parallel_chunks,
+        verify_checksums: global_config.transfer.verify_checksum,
+        discovery_port: global_config.network.port,
         ..Default::default()
     };
 

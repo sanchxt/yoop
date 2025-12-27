@@ -9,6 +9,9 @@ use super::HistoryArgs;
 
 /// Run the history command.
 pub async fn run(args: HistoryArgs) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     let mut store = HistoryStore::load().context("Failed to load transfer history")?;
 
     if args.clear {
@@ -28,7 +31,7 @@ pub async fn run(args: HistoryArgs) -> Result<()> {
         return Ok(());
     }
 
-    show_list(&store);
+    show_list(&store, global_config.history.max_entries);
     Ok(())
 }
 
@@ -148,7 +151,7 @@ fn show_details(store: &HistoryStore, index: usize) {
 }
 
 /// Show the history list.
-fn show_list(store: &HistoryStore) {
+fn show_list(store: &HistoryStore, max_entries: usize) {
     println!();
     println!("Recent Transfers:");
     println!("{}", "─".repeat(72));
@@ -161,7 +164,7 @@ fn show_list(store: &HistoryStore) {
     if store.is_empty() {
         println!("  (no transfer history)");
     } else {
-        for (index, entry) in store.list(Some(20)).iter().enumerate() {
+        for (index, entry) in store.list(Some(max_entries)).iter().enumerate() {
             println!(
                 "  {:3}  {:14}  {:10}  {:16}  {:6}  {:10}  {:8}",
                 index,
@@ -174,9 +177,9 @@ fn show_list(store: &HistoryStore) {
             );
         }
 
-        if store.len() > 20 {
+        if store.len() > max_entries {
             println!();
-            println!("  (showing 20 of {} transfers)", store.len());
+            println!("  (showing {} of {} transfers)", max_entries, store.len());
         }
     }
 

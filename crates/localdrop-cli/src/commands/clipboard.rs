@@ -10,10 +10,22 @@ use localdrop_core::clipboard::{
     diagnose_clipboard, ClipboardReceiveSession, ClipboardShareSession, ClipboardSyncSession,
     SyncHostSession, SyncSessionRunner,
 };
+use localdrop_core::config::Config;
 use localdrop_core::transfer::TransferConfig;
 
 use super::{ClipboardAction, ClipboardArgs};
 use crate::ui::{format_remaining, CodeBox};
+
+/// Create a TransferConfig using global config values.
+fn create_transfer_config(global_config: &Config) -> TransferConfig {
+    TransferConfig {
+        chunk_size: global_config.transfer.chunk_size,
+        parallel_streams: global_config.transfer.parallel_chunks,
+        verify_checksums: global_config.transfer.verify_checksum,
+        discovery_port: global_config.network.port,
+        ..Default::default()
+    }
+}
 
 /// Run the clipboard command.
 pub async fn run(args: ClipboardArgs) -> Result<()> {
@@ -27,6 +39,9 @@ pub async fn run(args: ClipboardArgs) -> Result<()> {
 /// Run clipboard share (one-shot).
 #[allow(clippy::unused_async)]
 async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     if !quiet && !json {
         println!();
         println!("LocalDrop Clipboard Share");
@@ -34,7 +49,7 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
         println!();
     }
 
-    let config = TransferConfig::default();
+    let config = create_transfer_config(&global_config);
 
     let session = match ClipboardShareSession::new(config).await {
         Ok(s) => s,
@@ -114,6 +129,9 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
 /// Run clipboard receive (one-shot).
 #[allow(clippy::too_many_lines)]
 async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     if !quiet && !json {
         println!();
         println!("LocalDrop Clipboard Receive");
@@ -131,7 +149,7 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
-    let config = TransferConfig::default();
+    let config = create_transfer_config(&global_config);
 
     let mut session = match ClipboardReceiveSession::connect(&args.code, config).await {
         Ok(s) => s,
@@ -243,6 +261,9 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
 
 /// Run clipboard sync (bidirectional live sync).
 async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     if !quiet && !json {
         println!();
         println!("LocalDrop Clipboard Sync");
@@ -250,7 +271,7 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
         println!();
     }
 
-    let config = TransferConfig::default();
+    let config = create_transfer_config(&global_config);
 
     if let Some(ref code_str) = args.code {
         if !quiet && !json {

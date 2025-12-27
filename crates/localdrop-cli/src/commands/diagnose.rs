@@ -7,9 +7,10 @@ use std::time::Duration;
 
 use anyhow::Result;
 
+use localdrop_core::config::Config;
 use localdrop_core::discovery::HybridListener;
 use localdrop_core::trust::TrustStore;
-use localdrop_core::{DEFAULT_DISCOVERY_PORT, DEFAULT_TRANSFER_PORT_END, VERSION};
+use localdrop_core::VERSION;
 
 use super::DiagnoseArgs;
 
@@ -26,27 +27,42 @@ struct NetworkInfo {
 
 /// Run the diagnose command.
 pub async fn run(args: DiagnoseArgs) -> Result<()> {
-    let net_info = check_network().await;
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
+    let net_info = check_network(&global_config).await;
     let mdns_ok = check_mdns().await;
     let trusted_devices = get_trusted_devices();
-    let active_shares = scan_for_shares().await;
+    let active_shares = scan_for_shares(&global_config).await;
 
     if args.json {
-        output_json(&net_info, mdns_ok, &trusted_devices, &active_shares);
+        output_json(
+            &net_info,
+            mdns_ok,
+            &trusted_devices,
+            &active_shares,
+            &global_config,
+        );
         return Ok(());
     }
 
-    output_text(&net_info, mdns_ok, &trusted_devices, &active_shares);
+    output_text(
+        &net_info,
+        mdns_ok,
+        &trusted_devices,
+        &active_shares,
+        &global_config,
+    );
     Ok(())
 }
 
 /// Check network connectivity.
-async fn check_network() -> NetworkInfo {
+async fn check_network(config: &Config) -> NetworkInfo {
     let local_ip = get_local_ip().unwrap_or_else(|| "unknown".to_string());
 
     let udp_broadcast_ok = test_udp_broadcast();
 
-    let udp_listen_ok = test_udp_listen();
+    let udp_listen_ok = test_udp_listen(config.network.port);
 
     NetworkInfo {
         local_ip,
@@ -77,8 +93,8 @@ fn test_udp_broadcast() -> bool {
 }
 
 /// Test UDP listen capability on discovery port.
-fn test_udp_listen() -> bool {
-    UdpSocket::bind(format!("0.0.0.0:{}", DEFAULT_DISCOVERY_PORT)).is_ok()
+fn test_udp_listen(discovery_port: u16) -> bool {
+    UdpSocket::bind(format!("0.0.0.0:{}", discovery_port)).is_ok()
         || UdpSocket::bind("0.0.0.0:0").is_ok()
 }
 
@@ -102,8 +118,8 @@ fn get_trusted_devices() -> Vec<(String, String)> {
 }
 
 /// Scan for active shares on the network.
-async fn scan_for_shares() -> Vec<String> {
-    match HybridListener::new(DEFAULT_DISCOVERY_PORT).await {
+async fn scan_for_shares(config: &Config) -> Vec<String> {
+    match HybridListener::new(config.network.port).await {
         Ok(listener) => {
             let shares = listener.scan(Duration::from_secs(2)).await;
             let _ = listener.shutdown();
@@ -129,6 +145,7 @@ fn output_json(
     mdns_ok: bool,
     trusted_devices: &[(String, String)],
     active_shares: &[String],
+    config: &Config,
 ) {
     let output = serde_json::json!({
         "version": VERSION,
@@ -139,8 +156,8 @@ fn output_json(
             "mdns": if mdns_ok { "ok" } else { "unavailable" },
         },
         "ports": {
-            "discovery": DEFAULT_DISCOVERY_PORT,
-            "transfer_range_end": DEFAULT_TRANSFER_PORT_END,
+            "discovery": config.network.port,
+            "transfer_range": format!("{}-{}", config.network.transfer_port_range.0, config.network.transfer_port_range.1),
         },
         "trusted_devices": trusted_devices.iter().map(|(name, level)| {
             serde_json::json!({
@@ -159,7 +176,11 @@ fn output_text(
     mdns_ok: bool,
     trusted_devices: &[(String, String)],
     active_shares: &[String],
+    config: &Config,
 ) {
+    let discovery_port = config.network.port;
+    let (transfer_start, transfer_end) = config.network.transfer_port_range;
+
     println!();
     println!("LocalDrop v{} - Network Diagnostics", VERSION);
     println!("{}", "─".repeat(50));
@@ -176,12 +197,8 @@ fn output_text(
     println!();
 
     println!("  Ports:");
-    println!("    Discovery:     {}", DEFAULT_DISCOVERY_PORT);
-    println!(
-        "    Transfer:      {}-{}",
-        DEFAULT_DISCOVERY_PORT + 5,
-        DEFAULT_TRANSFER_PORT_END
-    );
+    println!("    Discovery:     {}", discovery_port);
+    println!("    Transfer:      {}-{}", transfer_start, transfer_end);
     println!();
 
     println!("  Active Shares:");
@@ -213,14 +230,11 @@ fn output_text(
             println!("    - Enable UDP broadcast on your network");
         }
         if !net_info.udp_listen_ok {
-            println!(
-                "    - Check firewall allows UDP port {}",
-                DEFAULT_DISCOVERY_PORT
-            );
+            println!("    - Check firewall allows UDP port {}", discovery_port);
         }
         println!(
             "    - Ensure ports {}-{} are open for TCP",
-            DEFAULT_DISCOVERY_PORT, DEFAULT_TRANSFER_PORT_END
+            transfer_start, transfer_end
         );
     } else {
         println!("  Status: All network checks passed!");

@@ -9,7 +9,6 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use localdrop_core::discovery::HybridListener;
 use localdrop_core::file::format_size;
-use localdrop_core::DEFAULT_DISCOVERY_PORT;
 
 use super::receive;
 use super::{ReceiveArgs, ScanArgs};
@@ -17,6 +16,9 @@ use crate::ui::parse_duration;
 
 /// Run the scan command.
 pub async fn run(args: ScanArgs) -> Result<()> {
+    // Load user configuration for fallback values
+    let global_config = super::load_config();
+
     let duration = parse_duration(&args.duration)
         .context("Invalid duration format. Use formats like '5s', '10s', '30s'")?;
 
@@ -26,7 +28,7 @@ pub async fn run(args: ScanArgs) -> Result<()> {
         println!();
     }
 
-    let listener = HybridListener::new(DEFAULT_DISCOVERY_PORT)
+    let listener = HybridListener::new(global_config.network.port)
         .await
         .context("Failed to create discovery listener")?;
 
