@@ -1,6 +1,7 @@
 # Contributing to LocalDrop
 
-Thank you for your interest in contributing to LocalDrop! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to LocalDrop <3
+This document provides guidelines and instructions for contributing.
 
 ## Code of Conduct
 
@@ -10,16 +11,14 @@ Please be respectful and constructive in all interactions. We're building someth
 
 1. Fork the repository
 2. Clone your fork:
+
     ```bash
     git clone https://github.com/your-username/localdrop
     cd localdrop
     ```
-3. Set up pre-commit hooks:
-    ```bash
-    pip install pre-commit
-    pre-commit install
-    ```
-4. Create a branch for your changes:
+
+3. Create a branch for your changes:
+
     ```bash
     git checkout -b feature/my-feature
     ```
@@ -30,7 +29,6 @@ Please be respectful and constructive in all interactions. We're building someth
 
 -   **Rust 1.86.0+**: Install via [rustup](https://rustup.rs/)
 -   **Git**: For version control
--   **pre-commit** (optional): For automatic formatting/linting
 
 ### Building
 
@@ -135,31 +133,6 @@ Types:
     - Include any testing notes
 
 4. **Address feedback**: Make requested changes in new commits, then squash when approved
-
-## Project Structure
-
-```
-localdrop/
-├── crates/
-│   ├── localdrop-core/     # Core library (business logic)
-│   │   └── src/
-│   │       ├── code/       # Share code generation
-│   │       ├── config/     # Configuration management
-│   │       ├── crypto/     # Cryptographic operations
-│   │       ├── discovery/  # Network discovery
-│   │       ├── file/       # File operations
-│   │       ├── preview/    # File previews
-│   │       ├── protocol/   # LDRP protocol
-│   │       ├── transfer/   # Transfer engine
-│   │       ├── trust/      # Trusted devices
-│   │       └── web/        # Web server
-│   │
-│   └── localdrop-cli/      # CLI application
-│       └── src/
-│           └── commands/   # CLI commands
-│
-└── tests/                  # Integration tests
-```
 
 ## Adding New Features
 

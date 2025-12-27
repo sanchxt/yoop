@@ -3,6 +3,14 @@
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 
+/// Load configuration with graceful fallback to defaults.
+///
+/// This function should be used by all commands to load the user's configuration.
+/// If the config file doesn't exist or can't be parsed, it falls back to defaults.
+pub fn load_config() -> localdrop_core::config::Config {
+    localdrop_core::config::Config::load().unwrap_or_default()
+}
+
 pub mod clipboard;
 pub mod config;
 pub mod diagnose;
@@ -253,6 +261,12 @@ pub enum ConfigAction {
 
     /// Show all configuration
     Show,
+
+    /// List all available configuration keys
+    List,
+
+    /// Show the configuration file path
+    Path,
 
     /// Reset to defaults
     Reset,

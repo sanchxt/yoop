@@ -7,19 +7,24 @@ use std::time::Instant;
 use anyhow::Result;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::sync::watch;
+use uuid::Uuid;
 
+use localdrop_core::config::TrustLevel;
 use localdrop_core::file::format_size;
 use localdrop_core::history::{
     HistoryFileEntry, HistoryStore, TransferDirection, TransferHistoryEntry,
     TransferState as HistoryState,
 };
 use localdrop_core::transfer::{ReceiveSession, TransferConfig, TransferProgress, TransferState};
+use localdrop_core::trust::{TrustStore, TrustedDevice};
 
 use super::ReceiveArgs;
 
 /// Run the receive command.
 #[allow(clippy::too_many_lines)]
 pub async fn run(args: ReceiveArgs) -> Result<()> {
+    let global_config = super::load_config();
+
     let code = localdrop_core::code::ShareCode::parse(&args.code)?;
 
     if !args.quiet && !args.json {
@@ -39,15 +44,26 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
-    let output_dir = args.output.unwrap_or_else(|| PathBuf::from("."));
+    let output_dir = args
+        .output
+        .or_else(|| global_config.general.default_output.clone())
+        .unwrap_or_else(|| PathBuf::from("."));
 
-    let config = TransferConfig::default();
+    let config = TransferConfig {
+        chunk_size: global_config.transfer.chunk_size,
+        parallel_streams: global_config.transfer.parallel_chunks,
+        verify_checksums: global_config.transfer.verify_checksum,
+        discovery_port: global_config.network.port,
+        ..Default::default()
+    };
 
     let mut session = ReceiveSession::connect(&code, output_dir.clone(), config).await?;
 
     let (sender_addr, sender_name) = session.sender();
     let sender_name = sender_name.to_string();
     let sender_addr = *sender_addr;
+    let sender_device_id = session.sender_device_id();
+    let sender_public_key = session.sender_public_key().map(String::from);
     let files = session.files().to_vec();
     let total_files = files.len();
     let total_size: u64 = files.iter().map(|f| f.size).sum();
@@ -155,6 +171,15 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 println!();
                 println!("  Files saved to: {}", output_dir.display());
                 println!();
+
+                if !args.batch && global_config.trust.auto_prompt {
+                    prompt_trust_device(
+                        &sender_name,
+                        sender_device_id,
+                        sender_public_key.as_deref(),
+                    )
+                    .await;
+                }
             }
             if args.json {
                 let output = serde_json::json!({
@@ -299,4 +324,77 @@ async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
     }
 
     println!();
+}
+
+/// Prompt the user to trust the sender device after a successful transfer.
+async fn prompt_trust_device(
+    sender_name: &str,
+    sender_device_id: Option<Uuid>,
+    sender_public_key: Option<&str>,
+) {
+    let (Some(device_id), Some(public_key)) = (sender_device_id, sender_public_key) else {
+        return;
+    };
+
+    if let Ok(trust_store) = TrustStore::load() {
+        if trust_store.find_by_id(&device_id).is_some() {
+            return;
+        }
+    }
+
+    print!("  Trust \"{}\" for future transfers? [y/N] ", sender_name);
+    if io::stdout().flush().is_err() {
+        return;
+    }
+
+    let mut input = String::new();
+    let stdin = tokio::io::stdin();
+    let mut reader = BufReader::new(stdin);
+    if reader.read_line(&mut input).await.is_err() {
+        return;
+    }
+    let input = input.trim().to_lowercase();
+
+    if input != "y" && input != "yes" {
+        return;
+    }
+
+    println!();
+    println!("  Trust level:");
+    println!("    (1) Full - auto-accept transfers");
+    println!("    (2) Ask each time - confirm before sending");
+    print!("  Choose [1]: ");
+    if io::stdout().flush().is_err() {
+        return;
+    }
+
+    let mut level_input = String::new();
+    if reader.read_line(&mut level_input).await.is_err() {
+        return;
+    }
+    let level_input = level_input.trim();
+
+    let trust_level = if level_input == "2" {
+        TrustLevel::AskEachTime
+    } else {
+        TrustLevel::Full
+    };
+
+    let device = TrustedDevice::new(device_id, sender_name.to_string(), public_key.to_string())
+        .with_trust_level(trust_level);
+
+    match TrustStore::load() {
+        Ok(mut store) => {
+            if let Err(e) = store.add(device) {
+                eprintln!("  Failed to save trust: {}", e);
+            } else {
+                println!();
+                println!("  Device trusted.");
+                println!();
+            }
+        }
+        Err(e) => {
+            eprintln!("  Failed to load trust store: {}", e);
+        }
+    }
 }

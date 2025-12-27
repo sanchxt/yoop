@@ -12,12 +12,15 @@ LocalDrop enables seamless peer-to-peer file transfers over local networks using
 
 ### Core Features
 
--   **Cross-platform foundation**: Rust-based core library for universal compatibility
+-   **Cross-platform**: Works on Windows, Linux, and macOS
 -   **No account required**: Zero configuration, no cloud dependency
 -   **Simple 4-character codes**: Easy discovery without IP addresses
+-   **Dual discovery**: UDP broadcast + mDNS/DNS-SD for reliable device discovery
 -   **Private & secure**: TLS 1.3 encryption, data never leaves local network
 -   **Fast transfers**: Chunked transfers with xxHash64 verification
+-   **Resume capability**: Interrupted transfers can be resumed automatically
 -   **CLI interface**: Full-featured command-line tool
+-   **Web interface**: Browser-based UI for devices without CLI access
 -   **Clipboard sharing**: One-shot transfer and live bidirectional sync
 
 ## Quick Start
@@ -66,7 +69,9 @@ localdrop clipboard sync A7K9
 
 ## Installation
 
-### From Source (Requires Rust 1.86.0+)
+### From Source
+
+Requires **Rust 1.86.0** or later.
 
 ```bash
 git clone https://github.com/arceus/localdrop
@@ -74,44 +79,33 @@ cd localdrop
 cargo install --path crates/localdrop-cli
 ```
 
-### Package Managers (Coming Soon)
+### Pre-built Binaries
 
-```bash
-# Cargo
-cargo install localdrop
-
-# Homebrew (macOS/Linux)
-brew install localdrop
-
-# apt (Debian/Ubuntu)
-apt install localdrop
-
-# winget (Windows)
-winget install localdrop
-```
+Pre-built binaries and package manager support are planned for future releases.
 
 ## How It Works
 
-1. **Sender** shares files and gets a 4-character code (e.g., `A7K9`)
+1. **Sender** shares files and gets a 4-character code (e.g., `A 7 K 9`)
 2. **Receiver** enters the code on their device
-3. **Discovery** happens via UDP broadcast on local network
+3. **Discovery** happens via UDP broadcast + mDNS on local network
 4. **Transfer** occurs directly over TLS 1.3 encrypted TCP connection
 5. **Verification** using xxHash64 per chunk, SHA-256 for complete file
+6. **Resume** automatic resumption of interrupted transfers from last checkpoint
 
 ```
-┌─────────────┐           UDP Broadcast            ┌─────────────┐
-│   Sender    │ ◄────────  Code: A7K9  ──────────► │  Receiver   │
-│             │                                     │             │
-│ Share A7K9  │           TCP + TLS 1.3            │ Receive A7K9│
-│             │ ────────►  File Data  ───────────► │             │
-└─────────────┘                                     └─────────────┘
+┌─────────────┐           UDP Broadcast            ┌──────────────┐
+│   Sender    │ ◄────────  Code: A7K9  ──────────► │  Receiver    │
+│             │                                    │              │
+│ Share A7K9  │           TCP + TLS 1.3            │ Receive A7K9 │
+│             │ ────────►  File Data  ───────────► │              │
+└─────────────┘                                    └──────────────┘
 ```
 
 ## CLI Commands
 
 ```bash
 # Sharing & Receiving
-localdrop share <files...>          # Share files/folders
+localdrop share <files...>           # Share files/folders
 localdrop receive <code>             # Receive with code
 
 # Clipboard Sharing
@@ -119,14 +113,16 @@ localdrop clipboard share            # Share clipboard content
 localdrop clipboard receive <code>   # Receive clipboard content
 localdrop clipboard sync [code]      # Bidirectional clipboard sync
 
-# Advanced
-localdrop scan                       # Scan for active shares
-localdrop send <device> <files>      # Send to trusted device
-localdrop trust list                 # Manage trusted devices
+# Utilities
+localdrop scan                       # Scan for active shares on network
 localdrop web                        # Start web interface
 localdrop config                     # Manage configuration
 localdrop diagnose                   # Network diagnostics
-localdrop history                    # Transfer history
+localdrop history                    # View transfer history
+
+# Planned Features
+localdrop send <device> <files>      # Send to trusted device (in development)
+localdrop trust list                 # Manage trusted devices (in development)
 ```
 
 ## Configuration
@@ -164,7 +160,6 @@ rate_limit_attempts = 3
 
 -   **Rust**: 1.86.0 or later
 -   **Git**: For cloning the repository
--   **pre-commit** (optional): For git hooks
 
 ### Building
 
@@ -212,37 +207,16 @@ cargo clippy --workspace -- -D warnings
 cargo check --workspace
 ```
 
-## Minimum Supported Rust Version (MSRV)
-
-LocalDrop requires **Rust 1.86.0** or later.
-
 ## Architecture
 
 LocalDrop uses a custom binary protocol (LDRP) over TLS 1.3:
 
--   **Discovery**: UDP broadcast on port 52525
+-   **Discovery**: UDP broadcast + mDNS/DNS-SD on port 52525
 -   **Transfer**: TCP on ports 52530-52540
 -   **Encryption**: TLS 1.3 with self-signed ephemeral certificates
 -   **Integrity**: xxHash64 per chunk, SHA-256 per file
+-   **Resume**: State persistence for interrupted transfer recovery
 -   **Code Format**: 4 characters from `[2-9A-HJ-KMN-Z]` (avoiding ambiguous chars)
-
-### Protocol Flow
-
-```
-Receiver                                              Sender
-   │                                                    │
-   │◄─────────────── TCP Connect ──────────────────────│
-   │◄─────────────── TLS Handshake ───────────────────►│
-   │◄─────────────────── HELLO ────────────────────────│
-   │────────────────── HELLO_ACK ─────────────────────►│
-   │◄─────────────── CODE_VERIFY ──────────────────────│
-   │────────────── CODE_VERIFY_ACK ───────────────────►│
-   │─────────────────── FILE_LIST ────────────────────►│
-   │────────────────── FILE_LIST_ACK ─────────────────►│
-   │─────────────────── CHUNK_DATA ───────────────────►│
-   │────────────────── CHUNK_ACK ──────────────────────│
-   │────────────── TRANSFER_COMPLETE ─────────────────►│
-```
 
 ## Security
 
@@ -253,15 +227,6 @@ LocalDrop prioritizes security and privacy:
 -   **Rate limiting**: 3 failed attempts → 30 second lockout
 -   **Local only**: No internet connectivity required or used
 -   **Code verification**: HMAC-based verification prevents timing attacks
-
-## Roadmap
-
--   [x] **Phase 1**: Core library and CLI (Complete)
--   [ ] **Phase 2**: Cross-platform desktop support
--   [ ] **Phase 3**: Android application
--   [ ] **Phase 4**: iOS application
--   [ ] **Phase 5**: Enhanced features (previews, web UI, trusted devices)
--   [ ] **Phase 6**: Distribution and packaging
 
 ## Contributing
 
@@ -293,5 +258,7 @@ Built with Rust and powered by:
 
 -   [tokio](https://tokio.rs/) - Async runtime
 -   [rustls](https://github.com/rustls/rustls) - TLS implementation
+-   [mdns-sd](https://github.com/keepsimple1/mdns-sd) - mDNS/DNS-SD discovery
+-   [arboard](https://github.com/1Password/arboard) - Cross-platform clipboard access
 -   [clap](https://github.com/clap-rs/clap) - CLI parsing
 -   [serde](https://serde.rs/) - Serialization framework
