@@ -1,6 +1,6 @@
 {
   "name": "@sanchxt/yoop-darwin-x64",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Yoop binary for macOS x64 (Intel)",
   "os": [
     "darwin"
