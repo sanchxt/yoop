@@ -409,19 +409,15 @@ fn enumerate_directory(
                     }
                 }
             }
-        } else if path.is_dir() {
-            files.push(FileMetadata::from_path(path, base)?);
-        } else if path.is_file() {
+        } else if path.is_dir() || path.is_file() {
             files.push(FileMetadata::from_path(path, base)?);
         }
     }
 
-    files.sort_by(|a, b| {
-        match (a.is_directory, b.is_directory) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.relative_path.cmp(&b.relative_path),
-        }
+    files.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.relative_path.cmp(&b.relative_path),
     });
 
     Ok(())

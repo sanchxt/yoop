@@ -267,10 +267,13 @@ fn test_directory_enumeration() {
     let options = EnumerateOptions::default();
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
-    let file_entries: Vec<_> = files.iter().filter(|f| !f.is_directory).collect();
     let dir_entries: Vec<_> = files.iter().filter(|f| f.is_directory).collect();
 
-    assert_eq!(file_entries.len(), 3, "Should find all 3 files");
+    assert_eq!(
+        files.iter().filter(|f| !f.is_directory).count(),
+        3,
+        "Should find all 3 files"
+    );
     assert!(!dir_entries.is_empty(), "Should include directory entries");
 
     let paths: Vec<_> = files.iter().map(|f| f.relative_path.clone()).collect();
@@ -279,7 +282,9 @@ fn test_directory_enumeration() {
     assert!(paths.iter().any(|p| p.ends_with("file3.txt")));
 
     assert!(
-        dir_entries.iter().any(|d| d.relative_path.ends_with("subdir")),
+        dir_entries
+            .iter()
+            .any(|d| d.relative_path.ends_with("subdir")),
         "Should include subdir as directory entry"
     );
 }
@@ -325,7 +330,11 @@ fn test_max_depth() {
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
     let file_entries: Vec<_> = files.iter().filter(|f| !f.is_directory).collect();
-    assert_eq!(file_entries.len(), 2, "Should find 2 files within depth limit");
+    assert_eq!(
+        file_entries.len(),
+        2,
+        "Should find 2 files within depth limit"
+    );
 
     let names: Vec<_> = file_entries.iter().map(|f| f.file_name()).collect();
     assert!(names.contains(&"root.txt"));
@@ -333,7 +342,9 @@ fn test_max_depth() {
 
     let dir_entries: Vec<_> = files.iter().filter(|f| f.is_directory).collect();
     assert!(
-        dir_entries.iter().any(|d| d.relative_path.ends_with("level1")),
+        dir_entries
+            .iter()
+            .any(|d| d.relative_path.ends_with("level1")),
         "Should include level1 directory"
     );
 }
