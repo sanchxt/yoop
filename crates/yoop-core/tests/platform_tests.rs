@@ -267,12 +267,26 @@ fn test_directory_enumeration() {
     let options = EnumerateOptions::default();
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
-    assert_eq!(files.len(), 3, "Should find all 3 files");
+    let dir_entries: Vec<_> = files.iter().filter(|f| f.is_directory).collect();
+
+    assert_eq!(
+        files.iter().filter(|f| !f.is_directory).count(),
+        3,
+        "Should find all 3 files"
+    );
+    assert!(!dir_entries.is_empty(), "Should include directory entries");
 
     let paths: Vec<_> = files.iter().map(|f| f.relative_path.clone()).collect();
     assert!(paths.iter().any(|p| p.ends_with("file1.txt")));
     assert!(paths.iter().any(|p| p.ends_with("file2.txt")));
     assert!(paths.iter().any(|p| p.ends_with("file3.txt")));
+
+    assert!(
+        dir_entries
+            .iter()
+            .any(|d| d.relative_path.ends_with("subdir")),
+        "Should include subdir as directory entry"
+    );
 }
 
 /// Test hidden file handling.
@@ -285,12 +299,16 @@ fn test_hidden_files() {
 
     let options = EnumerateOptions::default();
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
-    assert_eq!(files.len(), 1, "Should only find visible file");
-    assert_eq!(files[0].file_name(), "visible.txt");
+    let file_entries: Vec<_> = files.iter().filter(|f| !f.is_directory).collect();
+    assert_eq!(file_entries.len(), 1, "Should only find visible file");
+    assert!(file_entries.iter().any(|f| f.file_name() == "visible.txt"));
 
     let options = EnumerateOptions::default().with_hidden(true);
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
-    assert_eq!(files.len(), 2, "Should find both files");
+    let file_entries: Vec<_> = files.iter().filter(|f| !f.is_directory).collect();
+    assert_eq!(file_entries.len(), 2, "Should find both files");
+    assert!(file_entries.iter().any(|f| f.file_name() == "visible.txt"));
+    assert!(file_entries.iter().any(|f| f.file_name() == ".hidden"));
 }
 
 /// Test max depth option.
@@ -311,9 +329,22 @@ fn test_max_depth() {
     let options = EnumerateOptions::default().with_max_depth(2);
     let files = enumerate_files(&[temp_dir.path().to_path_buf()], &options).expect("enumerate");
 
-    assert_eq!(files.len(), 2, "Should find 2 files within depth limit");
+    let file_entries: Vec<_> = files.iter().filter(|f| !f.is_directory).collect();
+    assert_eq!(
+        file_entries.len(),
+        2,
+        "Should find 2 files within depth limit"
+    );
 
-    let names: Vec<_> = files.iter().map(FileMetadata::file_name).collect();
+    let names: Vec<_> = file_entries.iter().map(|f| f.file_name()).collect();
     assert!(names.contains(&"root.txt"));
     assert!(names.contains(&"l1.txt"));
+
+    let dir_entries: Vec<_> = files.iter().filter(|f| f.is_directory).collect();
+    assert!(
+        dir_entries
+            .iter()
+            .any(|d| d.relative_path.ends_with("level1")),
+        "Should include level1 directory"
+    );
 }

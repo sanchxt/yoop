@@ -213,6 +213,7 @@ async fn test_hybrid_listener_find_timeout() {
 
 /// Test hybrid listener scan.
 #[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
 async fn test_hybrid_listener_scan() {
     let port = 53300 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
@@ -223,6 +224,7 @@ async fn test_hybrid_listener_scan() {
 
 /// Test hybrid listener sequential find with UDP preference.
 #[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
 async fn test_hybrid_listener_sequential_udp_first() {
     let port = 53400 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");

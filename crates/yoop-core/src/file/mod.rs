@@ -184,12 +184,12 @@ fn copy_dir_recursive(src: &Path, dst: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Metadata for a file being transferred.
+/// Metadata for a file or directory being transferred.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FileMetadata {
     /// Relative path from share root
     pub relative_path: PathBuf,
-    /// File size in bytes
+    /// File size in bytes (0 for directories)
     pub size: u64,
     /// MIME type
     pub mime_type: Option<String>,
@@ -205,6 +205,9 @@ pub struct FileMetadata {
     /// Symlink target (if is_symlink)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub symlink_target: Option<PathBuf>,
+    /// Whether this is a directory entry
+    #[serde(default)]
+    pub is_directory: bool,
 }
 
 impl FileMetadata {
@@ -228,20 +231,31 @@ impl FileMetadata {
             symlink_metadata
         };
 
+        let is_directory = metadata.is_dir();
         let relative_path = path.strip_prefix(base).unwrap_or(path).to_path_buf();
-        let mime_type = mime_guess::from_path(path).first().map(|m| m.to_string());
+
+        let (size, mime_type) = if is_directory {
+            (0, None)
+        } else {
+            (
+                metadata.len(),
+                mime_guess::from_path(path).first().map(|m| m.to_string()),
+            )
+        };
+
         let permissions = get_permissions(&metadata);
         let symlink_target = get_symlink_target(path, is_symlink);
 
         Ok(Self {
             relative_path,
-            size: metadata.len(),
+            size,
             mime_type,
             created: metadata.created().ok(),
             modified: metadata.modified().ok(),
             permissions,
             is_symlink,
             symlink_target,
+            is_directory,
         })
     }
 
@@ -348,7 +362,8 @@ pub fn enumerate_files(paths: &[PathBuf], options: &EnumerateOptions) -> Result<
             let base = path.parent().unwrap_or(path);
             files.push(FileMetadata::from_path(path, base)?);
         } else if path.is_dir() {
-            enumerate_directory(path, path, options, &mut files)?;
+            let base = path.parent().unwrap_or(path);
+            enumerate_directory(path, base, options, &mut files)?;
         }
     }
 
@@ -394,10 +409,16 @@ fn enumerate_directory(
                     }
                 }
             }
-        } else if path.is_file() {
+        } else if path.is_dir() || path.is_file() {
             files.push(FileMetadata::from_path(path, base)?);
         }
     }
+
+    files.sort_by(|a, b| match (a.is_directory, b.is_directory) {
+        (true, false) => std::cmp::Ordering::Less,
+        (false, true) => std::cmp::Ordering::Greater,
+        _ => a.relative_path.cmp(&b.relative_path),
+    });
 
     Ok(())
 }

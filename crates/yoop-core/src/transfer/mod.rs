@@ -528,6 +528,22 @@ impl ShareSession {
                 let _ = self.progress_tx.send(progress);
             }
 
+            if file.is_directory {
+                let start = ChunkStartPayload {
+                    file_index,
+                    chunk_index: 0,
+                    total_chunks: 0,
+                };
+                let start_payload = protocol::encode_payload(&start)?;
+                protocol::write_frame(stream, MessageType::ChunkStart, &start_payload).await?;
+                tracing::debug!(
+                    "Sent directory marker for file {}: {}",
+                    file_index,
+                    file.file_name()
+                );
+                continue;
+            }
+
             let file_path = self.find_file_path(&file.relative_path)?;
 
             let chunks = chunker.read_chunks(&file_path, file_index).await?;
@@ -1183,6 +1199,37 @@ impl ReceiveSession {
                         let file = &self.files[start.file_index];
                         let output_path = self.output_dir.join(&file.relative_path);
 
+                        if start.total_chunks == 0 || file.is_directory {
+                            tokio::fs::create_dir_all(&output_path).await.map_err(|e| {
+                                Error::Io(std::io::Error::new(
+                                    e.kind(),
+                                    format!(
+                                        "Failed to create directory {}: {}",
+                                        output_path.display(),
+                                        e
+                                    ),
+                                ))
+                            })?;
+
+                            #[cfg(unix)]
+                            if let Some(mode) = file.permissions {
+                                use std::os::unix::fs::PermissionsExt;
+                                let perms = std::fs::Permissions::from_mode(mode);
+                                if let Err(e) = std::fs::set_permissions(&output_path, perms) {
+                                    tracing::warn!(
+                                        "Failed to set permissions on directory {}: {}",
+                                        output_path.display(),
+                                        e
+                                    );
+                                }
+                            }
+
+                            tracing::debug!("Created directory: {}", output_path.display());
+
+                            current_file_index = Some(start.file_index);
+                            continue;
+                        }
+
                         let completed_chunks = resume_state.completed_chunks.get(&start.file_index);
                         let bytes_completed = completed_chunks
                             .map_or(0, |chunks| chunks.len() as u64 * chunk_size as u64);
@@ -1363,6 +1410,121 @@ impl ReceiveSession {
         Ok(file_list.files)
     }
 
+    async fn handle_chunk_start(
+        &self,
+        start: ChunkStartPayload,
+        current_writer: &mut Option<FileWriter>,
+        current_file_index: &mut Option<usize>,
+    ) -> Result<()> {
+        if *current_file_index != Some(start.file_index) {
+            if let Some(writer) = current_writer.take() {
+                let _sha256 = writer.finalize().await?;
+            }
+
+            let file = &self.files[start.file_index];
+            let output_path = self.output_dir.join(&file.relative_path);
+
+            if start.total_chunks == 0 || file.is_directory {
+                tokio::fs::create_dir_all(&output_path).await.map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        e.kind(),
+                        format!(
+                            "Failed to create directory {}: {}",
+                            output_path.display(),
+                            e
+                        ),
+                    ))
+                })?;
+
+                #[cfg(unix)]
+                if let Some(mode) = file.permissions {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    if let Err(e) = std::fs::set_permissions(&output_path, perms) {
+                        tracing::warn!(
+                            "Failed to set permissions on directory {}: {}",
+                            output_path.display(),
+                            e
+                        );
+                    }
+                }
+
+                tracing::debug!("Created directory: {}", output_path.display());
+                *current_file_index = Some(start.file_index);
+                return Ok(());
+            }
+
+            *current_writer = Some(FileWriter::new(output_path, file.size).await?);
+            *current_file_index = Some(start.file_index);
+
+            let mut progress = self.progress_rx.borrow().clone();
+            progress.current_file = start.file_index;
+            progress.current_file_name = file.file_name().to_string();
+            progress.file_bytes_transferred = 0;
+            progress.file_total_bytes = file.size;
+            let _ = self.progress_tx.send(progress);
+        }
+        Ok(())
+    }
+
+    async fn handle_chunk_data<S>(
+        &self,
+        stream: &mut S,
+        payload: &[u8],
+        current_writer: &mut Option<FileWriter>,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let chunk_data = protocol::decode_chunk_data(payload)?;
+
+        let chunk = FileChunk {
+            file_index: chunk_data.file_index,
+            chunk_index: chunk_data.chunk_index,
+            data: chunk_data.data.clone(),
+            checksum: chunk_data.checksum,
+            is_last: false,
+        };
+
+        let success = if let Some(ref mut writer) = current_writer {
+            writer.write_chunk(&chunk).await.is_ok()
+        } else {
+            false
+        };
+
+        let ack = ChunkAckPayload {
+            file_index: chunk_data.file_index,
+            chunk_index: chunk_data.chunk_index,
+            success,
+        };
+        let ack_payload = protocol::encode_payload(&ack)?;
+        protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+
+        if !success {
+            return Err(Error::ChecksumMismatch {
+                file: self.files[chunk_data.file_index].file_name().to_string(),
+                chunk: chunk_data.chunk_index,
+            });
+        }
+
+        let mut progress = self.progress_rx.borrow().clone();
+        progress.file_bytes_transferred += chunk_data.data.len() as u64;
+        progress.total_bytes_transferred += chunk_data.data.len() as u64;
+        let elapsed = progress.started_at.elapsed().as_secs_f64();
+        if elapsed > 0.0 {
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            {
+                progress.speed_bps = (progress.total_bytes_transferred as f64 / elapsed) as u64;
+            }
+            let remaining = progress.total_bytes - progress.total_bytes_transferred;
+            if progress.speed_bps > 0 {
+                progress.eta = Some(Duration::from_secs(remaining / progress.speed_bps));
+            }
+        }
+        let _ = self.progress_tx.send(progress);
+        Ok(())
+    }
+
     async fn do_receive<S>(&self, stream: &mut S) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin,
@@ -1376,78 +1538,12 @@ impl ReceiveSession {
             match header.message_type {
                 MessageType::ChunkStart => {
                     let start: ChunkStartPayload = protocol::decode_payload(&payload)?;
-
-                    if current_file_index != Some(start.file_index) {
-                        if let Some(writer) = current_writer.take() {
-                            let _sha256 = writer.finalize().await?;
-                        }
-
-                        let file = &self.files[start.file_index];
-                        let output_path = self.output_dir.join(&file.relative_path);
-                        current_writer = Some(FileWriter::new(output_path, file.size).await?);
-                        current_file_index = Some(start.file_index);
-
-                        {
-                            let mut progress = self.progress_rx.borrow().clone();
-                            progress.current_file = start.file_index;
-                            progress.current_file_name = file.file_name().to_string();
-                            progress.file_bytes_transferred = 0;
-                            progress.file_total_bytes = file.size;
-                            let _ = self.progress_tx.send(progress);
-                        }
-                    }
+                    self.handle_chunk_start(start, &mut current_writer, &mut current_file_index)
+                        .await?;
                 }
                 MessageType::ChunkData => {
-                    let chunk_data = protocol::decode_chunk_data(&payload)?;
-
-                    let chunk = FileChunk {
-                        file_index: chunk_data.file_index,
-                        chunk_index: chunk_data.chunk_index,
-                        data: chunk_data.data.clone(),
-                        checksum: chunk_data.checksum,
-                        is_last: false,
-                    };
-
-                    let success = if let Some(ref mut writer) = current_writer {
-                        writer.write_chunk(&chunk).await.is_ok()
-                    } else {
-                        false
-                    };
-
-                    let ack = ChunkAckPayload {
-                        file_index: chunk_data.file_index,
-                        chunk_index: chunk_data.chunk_index,
-                        success,
-                    };
-                    let ack_payload = protocol::encode_payload(&ack)?;
-                    protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
-
-                    if !success {
-                        return Err(Error::ChecksumMismatch {
-                            file: self.files[chunk_data.file_index].file_name().to_string(),
-                            chunk: chunk_data.chunk_index,
-                        });
-                    }
-
-                    {
-                        let mut progress = self.progress_rx.borrow().clone();
-                        progress.file_bytes_transferred += chunk_data.data.len() as u64;
-                        progress.total_bytes_transferred += chunk_data.data.len() as u64;
-                        let elapsed = progress.started_at.elapsed().as_secs_f64();
-                        if elapsed > 0.0 {
-                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                            {
-                                progress.speed_bps =
-                                    (progress.total_bytes_transferred as f64 / elapsed) as u64;
-                            }
-                            let remaining = progress.total_bytes - progress.total_bytes_transferred;
-                            if progress.speed_bps > 0 {
-                                progress.eta =
-                                    Some(Duration::from_secs(remaining / progress.speed_bps));
-                            }
-                        }
-                        let _ = self.progress_tx.send(progress);
-                    }
+                    self.handle_chunk_data(stream, &payload, &mut current_writer)
+                        .await?;
                 }
                 MessageType::TransferComplete => {
                     if let Some(writer) = current_writer.take() {
