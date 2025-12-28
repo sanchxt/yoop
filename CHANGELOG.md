@@ -5,6 +5,40 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1](https://github.com/sanchxt/yoop/compare/v0.1.0...v0.1.1) (2025-12-28)
+
+
+### Features
+
+* Add cross-platform clipboard syncing and sharing functionality ([c2a1aba](https://github.com/sanchxt/yoop/commit/c2a1aba60e4466c10e2910b25f6e0528ed8b7ea7))
+* Add diagnose, history, scan commands ([#3](https://github.com/sanchxt/yoop/issues/3)) ([04664dd](https://github.com/sanchxt/yoop/commit/04664ddcc93cfcdca0aef2011f7fa758602372d1))
+* Add feature to store trusted devices and quick-accept them, and configs to manage settings ([#5](https://github.com/sanchxt/yoop/issues/5)) ([b047522](https://github.com/sanchxt/yoop/commit/b04752280c88a0cadab1435dfc28ec00c441b91c))
+* Add npm package distribution for global CLI installation ([0b30315](https://github.com/sanchxt/yoop/commit/0b30315967b9dde507b835e2b7f8a5d1dc1e1ec3))
+* add transfer resume and mDNS/DNS-SD discovery ([826907e](https://github.com/sanchxt/yoop/commit/826907e4ace769adf1f79bd05ef1bd45dbfb14dd))
+* improve share code display with centered Unicode box and live countdown ([22d1eb9](https://github.com/sanchxt/yoop/commit/22d1eb9c76df102a1a08de0052b2782b0deb2188))
+* initial release v0.1.0 ([3660df7](https://github.com/sanchxt/yoop/commit/3660df73afe3f1625fcb10362fb07f3ff6173f5a))
+
+
+### Bug Fixes
+
+* add connection keep-alive during transfer prompt ([5afee02](https://github.com/sanchxt/yoop/commit/5afee02be578cd430c13c7caf1b5d79bc289f802))
+* Handle already-published packages gracefully in npm workflow ([22f6cc5](https://github.com/sanchxt/yoop/commit/22f6cc5fe75124812e523144245d356155be3a31))
+* handle mdns' asynchronous nature ([8bc740e](https://github.com/sanchxt/yoop/commit/8bc740ec93206e54e03221b1975d3b381eff1d79))
+* Implement clipboard's sync argument ([7e8e33b](https://github.com/sanchxt/yoop/commit/7e8e33bf969f46b65b21c350b461c6bafb1d49ea))
+* improve keep-alive logic ([b78698b](https://github.com/sanchxt/yoop/commit/b78698b7e5c86b9a0647a363a01403b07ecd6e6d))
+* properly shutdown mDNS daemon on drop ([fe4ff26](https://github.com/sanchxt/yoop/commit/fe4ff26463fa7f169b6831d58b6bb5c35db84f34))
+* resolve channel closure errors in mDNS cleanup ([aa4db47](https://github.com/sanchxt/yoop/commit/aa4db47fe151ce201b8aeb99c5a9515ea9ae73f6))
+* resolve clippy warnings ([a0279a4](https://github.com/sanchxt/yoop/commit/a0279a40522e9d9e1f0c103e728710c2cdd0db27))
+* show waiting message before blocking host() call in clipboard sync ([c59e8e4](https://github.com/sanchxt/yoop/commit/c59e8e4beee0a3d5cccab74744efeeca1197fb64))
+* Use macos-latest for both macOS targets to avoid runner availability issues ([42bcc15](https://github.com/sanchxt/yoop/commit/42bcc15e903d204d7a5e14a87129935a35641fa6))
+* use simple release-type for cargo workspace ([84dc30a](https://github.com/sanchxt/yoop/commit/84dc30ad5a07782c3f9ba2f1fe74225054853918))
+
+
+### Refactoring
+
+* Change name to Yoop ([4baabbc](https://github.com/sanchxt/yoop/commit/4baabbcd3fe0ae322b2bba27b11eba012f8d042e))
+* split ClipboardSyncSession::host() to show code before blocking ([0bf1572](https://github.com/sanchxt/yoop/commit/0bf157207012abf884757b4db0c93cd32e7d8800))
+
 ## [Unreleased]
 
 ### Added
