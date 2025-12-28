@@ -6,9 +6,9 @@ on:
   workflow_dispatch:
     inputs:
       dry_run:
-        description: 'Dry run (skip actual publish)'
+        description: "Dry run (skip actual publish)"
         required: false
-        default: 'false'
+        default: false
         type: boolean
 
 env:
@@ -108,7 +108,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write  # For npm provenance
+      id-token: write # For npm provenance
 
     steps:
       - name: Checkout repository

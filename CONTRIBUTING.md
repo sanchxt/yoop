@@ -29,6 +29,26 @@ Please be respectful and constructive in all interactions. We're building someth
 
 -   **Rust 1.86.0+**: Install via [rustup](https://rustup.rs/)
 -   **Git**: For version control
+-   **Python 3.8+**: For pre-commit hooks (optional but recommended)
+
+### Git Hooks Setup
+
+After cloning, install the pre-commit hooks to enable automatic linting and commit message validation:
+
+```bash
+# Install pre-commit (if not already installed)
+pip install pre-commit
+
+# Install all hooks including commit-msg validation
+pre-commit install
+pre-commit install --hook-type commit-msg
+```
+
+This enables:
+
+-   **Pre-commit**: Format and lint checks before each commit
+-   **Pre-push**: Test suite runs before pushing
+-   **Commit-msg**: Validates [conventional commit](https://www.conventionalcommits.org/) format
 
 ### Building
 
@@ -78,7 +98,8 @@ cargo fmt --all -- --check
 
 ### Commit Messages
 
-Use clear, descriptive commit messages:
+Commits must follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
+This is **enforced by commitlint** via pre-commit hooks (see [Git Hooks Setup](#git-hooks-setup)).
 
 ```
 type(scope): brief description
@@ -91,15 +112,22 @@ Longer description if needed, explaining:
 Fixes #123
 ```
 
-Types:
+**Types:**
 
--   `feat`: New feature
--   `fix`: Bug fix
--   `docs`: Documentation only
--   `style`: Formatting, no code change
--   `refactor`: Code change that neither fixes a bug nor adds a feature
--   `test`: Adding missing tests
--   `chore`: Build process or auxiliary tool changes
+| Type       | Description                        | Version Bump |
+| ---------- | ---------------------------------- | ------------ |
+| `feat`     | New feature                        | Minor        |
+| `fix`      | Bug fix                            | Patch        |
+| `docs`     | Documentation only                 | None         |
+| `style`    | Formatting, no code change         | None         |
+| `refactor` | Code change without feature or fix | None         |
+| `perf`     | Performance improvement            | Patch        |
+| `test`     | Adding/fixing tests                | None         |
+| `build`    | Build system changes               | None         |
+| `ci`       | CI configuration                   | None         |
+| `chore`    | Maintenance tasks                  | None         |
+
+**Breaking changes**: Add `!` after the type (e.g., `feat!: remove deprecated API`).
 
 ### Documentation
 
