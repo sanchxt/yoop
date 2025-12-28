@@ -1,10 +1,16 @@
 {
   "name": "@sanchxt/yoop-darwin-arm64",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Yoop binary for macOS ARM64 (Apple Silicon)",
-  "os": ["darwin"],
-  "cpu": ["arm64"],
-  "files": ["bin/yoop"],
+  "os": [
+    "darwin"
+  ],
+  "cpu": [
+    "arm64"
+  ],
+  "files": [
+    "bin/yoop"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sanchxt/yoop.git"

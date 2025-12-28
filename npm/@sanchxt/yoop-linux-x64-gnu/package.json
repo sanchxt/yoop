@@ -1,10 +1,16 @@
 {
   "name": "@sanchxt/yoop-linux-x64-gnu",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Yoop binary for Linux x64 (glibc)",
-  "os": ["linux"],
-  "cpu": ["x64"],
-  "files": ["bin/yoop"],
+  "os": [
+    "linux"
+  ],
+  "cpu": [
+    "x64"
+  ],
+  "files": [
+    "bin/yoop"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/sanchxt/yoop.git"
