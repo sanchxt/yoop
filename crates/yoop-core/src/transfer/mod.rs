@@ -528,6 +528,22 @@ impl ShareSession {
                 let _ = self.progress_tx.send(progress);
             }
 
+            if file.is_directory {
+                let start = ChunkStartPayload {
+                    file_index,
+                    chunk_index: 0,
+                    total_chunks: 0,
+                };
+                let start_payload = protocol::encode_payload(&start)?;
+                protocol::write_frame(stream, MessageType::ChunkStart, &start_payload).await?;
+                tracing::debug!(
+                    "Sent directory marker for file {}: {}",
+                    file_index,
+                    file.file_name()
+                );
+                continue;
+            }
+
             let file_path = self.find_file_path(&file.relative_path)?;
 
             let chunks = chunker.read_chunks(&file_path, file_index).await?;
@@ -1183,6 +1199,36 @@ impl ReceiveSession {
                         let file = &self.files[start.file_index];
                         let output_path = self.output_dir.join(&file.relative_path);
 
+                        if start.total_chunks == 0 || file.is_directory {
+                            tokio::fs::create_dir_all(&output_path).await.map_err(|e| {
+                                Error::Io(std::io::Error::new(
+                                    e.kind(),
+                                    format!("Failed to create directory {}: {}", output_path.display(), e),
+                                ))
+                            })?;
+
+                            #[cfg(unix)]
+                            if let Some(mode) = file.permissions {
+                                use std::os::unix::fs::PermissionsExt;
+                                let perms = std::fs::Permissions::from_mode(mode);
+                                if let Err(e) = std::fs::set_permissions(&output_path, perms) {
+                                    tracing::warn!(
+                                        "Failed to set permissions on directory {}: {}",
+                                        output_path.display(),
+                                        e
+                                    );
+                                }
+                            }
+
+                            tracing::debug!(
+                                "Created directory: {}",
+                                output_path.display()
+                            );
+
+                            current_file_index = Some(start.file_index);
+                            continue;
+                        }
+
                         let completed_chunks = resume_state.completed_chunks.get(&start.file_index);
                         let bytes_completed = completed_chunks
                             .map_or(0, |chunks| chunks.len() as u64 * chunk_size as u64);
@@ -1384,6 +1430,37 @@ impl ReceiveSession {
 
                         let file = &self.files[start.file_index];
                         let output_path = self.output_dir.join(&file.relative_path);
+
+                        if start.total_chunks == 0 || file.is_directory {
+                            tokio::fs::create_dir_all(&output_path).await.map_err(|e| {
+                                Error::Io(std::io::Error::new(
+                                    e.kind(),
+                                    format!("Failed to create directory {}: {}", output_path.display(), e),
+                                ))
+                            })?;
+
+                            #[cfg(unix)]
+                            if let Some(mode) = file.permissions {
+                                use std::os::unix::fs::PermissionsExt;
+                                let perms = std::fs::Permissions::from_mode(mode);
+                                if let Err(e) = std::fs::set_permissions(&output_path, perms) {
+                                    tracing::warn!(
+                                        "Failed to set permissions on directory {}: {}",
+                                        output_path.display(),
+                                        e
+                                    );
+                                }
+                            }
+
+                            tracing::debug!(
+                                "Created directory: {}",
+                                output_path.display()
+                            );
+
+                            current_file_index = Some(start.file_index);
+                            continue;
+                        }
+
                         current_writer = Some(FileWriter::new(output_path, file.size).await?);
                         current_file_index = Some(start.file_index);
 
