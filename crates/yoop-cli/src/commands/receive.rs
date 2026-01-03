@@ -10,11 +10,12 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use yoop_core::config::TrustLevel;
-use yoop_core::file::format_size;
+use yoop_core::file::{format_size, FileMetadata};
 use yoop_core::history::{
     HistoryFileEntry, HistoryStore, TransferDirection, TransferHistoryEntry,
     TransferState as HistoryState,
 };
+use yoop_core::preview::PreviewType;
 use yoop_core::transfer::{ReceiveSession, TransferConfig, TransferProgress, TransferState};
 use yoop_core::trust::{TrustStore, TrustedDevice};
 
@@ -75,11 +76,28 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 "name": &sender_name,
                 "address": sender_addr.to_string(),
             },
-            "files": files.iter().map(|f| serde_json::json!({
-                "name": f.file_name(),
-                "size": f.size,
-                "path": f.relative_path.display().to_string(),
-            })).collect::<Vec<_>>(),
+            "files": files.iter().map(|f| {
+                let mut file_json = serde_json::json!({
+                    "name": f.file_name(),
+                    "size": f.size,
+                    "path": f.relative_path.display().to_string(),
+                });
+                if let Some(ref preview) = f.preview {
+                    file_json["preview"] = serde_json::json!({
+                        "type": format!("{:?}", preview.preview_type).to_lowercase(),
+                        "mime_type": &preview.mime_type,
+                    });
+                    if let Some(ref meta) = preview.metadata {
+                        if let Some((w, h)) = meta.dimensions {
+                            file_json["preview"]["dimensions"] = serde_json::json!([w, h]);
+                        }
+                        if let Some(count) = meta.file_count {
+                            file_json["preview"]["file_count"] = serde_json::json!(count);
+                        }
+                    }
+                }
+                file_json
+            }).collect::<Vec<_>>(),
             "total_size": total_size,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
@@ -94,7 +112,17 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         );
         println!();
         for file in &files {
-            println!("  {} {}", file_icon(file), file.file_name());
+            let preview_info = format_preview_info(file);
+            if preview_info.is_empty() {
+                println!("  {} {}", file_icon(file), file.file_name());
+            } else {
+                println!(
+                    "  {} {} {}",
+                    file_icon(file),
+                    file.file_name(),
+                    preview_info
+                );
+            }
         }
         println!();
     }
@@ -256,7 +284,7 @@ fn record_history(
     }
 }
 
-fn file_icon(file: &yoop_core::file::FileMetadata) -> &'static str {
+fn file_icon(file: &FileMetadata) -> &'static str {
     if file.is_symlink {
         "->"
     } else if let Some(ref mime) = file.mime_type {
@@ -273,6 +301,46 @@ fn file_icon(file: &yoop_core::file::FileMetadata) -> &'static str {
         }
     } else {
         "[file]"
+    }
+}
+
+fn format_preview_info(file: &FileMetadata) -> String {
+    match &file.preview {
+        Some(preview) => match preview.preview_type {
+            PreviewType::Thumbnail => {
+                if let Some(ref meta) = preview.metadata {
+                    if let Some((w, h)) = meta.dimensions {
+                        return format!("({}x{})", w, h);
+                    }
+                }
+                String::new()
+            }
+            PreviewType::Text => {
+                let snippet: String = preview
+                    .data
+                    .chars()
+                    .take(40)
+                    .map(|c| if c == '\n' || c == '\r' { ' ' } else { c })
+                    .collect();
+                if snippet.len() < preview.data.len() {
+                    format!("\"{}...\"", snippet.trim())
+                } else if !snippet.is_empty() {
+                    format!("\"{}\"", snippet.trim())
+                } else {
+                    String::new()
+                }
+            }
+            PreviewType::ArchiveListing => {
+                if let Some(ref meta) = preview.metadata {
+                    if let Some(count) = meta.file_count {
+                        return format!("({} files)", count);
+                    }
+                }
+                String::new()
+            }
+            PreviewType::Icon | PreviewType::None => String::new(),
+        },
+        None => String::new(),
     }
 }
 
