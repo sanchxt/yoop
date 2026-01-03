@@ -208,6 +208,9 @@ pub struct FileMetadata {
     /// Whether this is a directory entry
     #[serde(default)]
     pub is_directory: bool,
+    /// File preview (thumbnail, text snippet, etc.)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<crate::preview::Preview>,
 }
 
 impl FileMetadata {
@@ -256,6 +259,7 @@ impl FileMetadata {
             is_symlink,
             symlink_target,
             is_directory,
+            preview: None,
         })
     }
 

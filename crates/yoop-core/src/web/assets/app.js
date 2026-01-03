@@ -367,9 +367,34 @@ async function connectToCode() {
         elements.incomingFiles.innerHTML = "";
         result.files.forEach((file) => {
             const li = document.createElement("li");
+            li.className = "file-item";
+
+            let previewHtml = "";
+            if (file.preview) {
+                if (file.preview.preview_type === "thumbnail" && file.preview.data) {
+                    previewHtml = `<img class="file-preview-img" src="data:${file.preview.mime_type};base64,${file.preview.data}" alt="Preview">`;
+                } else if (file.preview.preview_type === "text" && file.preview.data) {
+                    const snippet = file.preview.data.substring(0, 60).replace(/\n/g, " ");
+                    previewHtml = `<span class="file-preview-text">"${snippet}${file.preview.data.length > 60 ? "..." : ""}"</span>`;
+                } else if (file.preview.preview_type === "archive" && file.preview.file_count) {
+                    previewHtml = `<span class="file-preview-meta">(${file.preview.file_count} files)</span>`;
+                }
+            }
+
+            let dimensionsHtml = "";
+            if (file.preview?.dimensions) {
+                dimensionsHtml = `<span class="file-dimensions">${file.preview.dimensions[0]}×${file.preview.dimensions[1]}</span>`;
+            }
+
             li.innerHTML = `
-                <span class="file-name">${file.name}</span>
-                <span class="file-size">${formatBytes(file.size)}</span>
+                ${previewHtml}
+                <div class="file-info">
+                    <span class="file-name">${file.name}</span>
+                    <span class="file-meta">
+                        <span class="file-size">${formatBytes(file.size)}</span>
+                        ${dimensionsHtml}
+                    </span>
+                </div>
             `;
             elements.incomingFiles.appendChild(li);
         });

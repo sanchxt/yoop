@@ -257,10 +257,31 @@ impl ShareSession {
         let code = CodeGenerator::new().generate()?;
 
         let options = EnumerateOptions::default();
-        let files = enumerate_files(paths, &options)?;
+        let mut files = enumerate_files(paths, &options)?;
 
         if files.is_empty() {
             return Err(Error::FileNotFound("no files to share".to_string()));
+        }
+
+        // Generate previews for files
+        let preview_generator = crate::preview::PreviewGenerator::new();
+        for file in &mut files {
+            if !file.is_directory {
+                // Find the absolute path for this file
+                for base_path in paths {
+                    let absolute_path = if base_path.is_dir() {
+                        base_path.join(&file.relative_path)
+                    } else {
+                        base_path.clone()
+                    };
+                    if absolute_path.exists() {
+                        if let Ok(preview) = preview_generator.generate(&absolute_path).await {
+                            file.preview = Some(preview);
+                        }
+                        break;
+                    }
+                }
+            }
         }
 
         let file_paths: Vec<PathBuf> = paths.to_vec();

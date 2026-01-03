@@ -77,13 +77,55 @@ pub struct FileInfo {
     name: String,
     /// File size in bytes
     size: u64,
+    /// Preview information (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preview: Option<FilePreviewInfo>,
+}
+
+/// Preview information for web responses.
+#[derive(Debug, Serialize)]
+pub struct FilePreviewInfo {
+    /// Preview type
+    preview_type: String,
+    /// MIME type of preview
+    mime_type: String,
+    /// Preview data (base64 for images, text for text previews, JSON for archives)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    data: Option<String>,
+    /// Image dimensions (width, height)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    dimensions: Option<(u32, u32)>,
+    /// Number of files in archive
+    #[serde(skip_serializing_if = "Option::is_none")]
+    file_count: Option<usize>,
 }
 
 impl From<&FileMetadata> for FileInfo {
     fn from(meta: &FileMetadata) -> Self {
+        let preview = meta.preview.as_ref().map(|p| {
+            let preview_type = match p.preview_type {
+                crate::preview::PreviewType::Thumbnail => "thumbnail",
+                crate::preview::PreviewType::Text => "text",
+                crate::preview::PreviewType::ArchiveListing => "archive",
+                crate::preview::PreviewType::Icon => "icon",
+                crate::preview::PreviewType::None => "none",
+            };
+            FilePreviewInfo {
+                preview_type: preview_type.to_string(),
+                mime_type: p.mime_type.clone(),
+                data: if p.data.is_empty() {
+                    None
+                } else {
+                    Some(p.data.clone())
+                },
+                dimensions: p.metadata.as_ref().and_then(|m| m.dimensions),
+                file_count: p.metadata.as_ref().and_then(|m| m.file_count),
+            }
+        });
         Self {
             name: meta.file_name().to_string(),
             size: meta.size,
+            preview,
         }
     }
 }
@@ -623,6 +665,7 @@ mod tests {
             is_symlink: false,
             symlink_target: None,
             is_directory: false,
+            preview: None,
         };
 
         let info = FileInfo::from(&meta);

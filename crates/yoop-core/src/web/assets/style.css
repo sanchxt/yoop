@@ -143,6 +143,44 @@ main {
     margin-bottom: 0.5rem;
 }
 
+.file-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+}
+
+.file-preview-img {
+    width: 48px;
+    height: 48px;
+    object-fit: cover;
+    border-radius: 4px;
+    flex-shrink: 0;
+}
+
+.file-preview-text {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+    font-style: italic;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 200px;
+}
+
+.file-preview-meta {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+}
+
+.file-info {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
 .file-name {
     flex: 1;
     font-weight: 500;
@@ -151,10 +189,20 @@ main {
     white-space: nowrap;
 }
 
+.file-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
 .file-size {
     color: var(--text-muted);
     font-size: 0.875rem;
-    margin-left: 1rem;
+}
+
+.file-dimensions {
+    color: var(--text-muted);
+    font-size: 0.75rem;
 }
 
 .remove-file {
