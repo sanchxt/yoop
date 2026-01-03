@@ -1,6 +1,6 @@
 //! CLI command definitions and handlers.
 
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Load configuration with graceful fallback to defaults.
@@ -12,6 +12,7 @@ pub fn load_config() -> yoop_core::config::Config {
 }
 
 pub mod clipboard;
+pub mod completions;
 pub mod config;
 pub mod diagnose;
 pub mod history;
@@ -66,6 +67,9 @@ pub enum Command {
 
     /// View transfer history
     History(HistoryArgs),
+
+    /// Generate shell completions
+    Completions(CompletionsArgs),
 
     /// Internal: hold clipboard content (not user-facing, used by spawn)
     #[command(hide = true)]
@@ -294,6 +298,55 @@ pub struct HistoryArgs {
     /// Output in JSON format
     #[arg(long)]
     pub json: bool,
+}
+
+/// Arguments for the completions command
+#[derive(Parser)]
+pub struct CompletionsArgs {
+    /// Completions subcommand
+    #[command(subcommand)]
+    pub action: CompletionsAction,
+}
+
+/// Completions subcommands
+#[derive(Subcommand, Clone, Copy)]
+pub enum CompletionsAction {
+    /// Install shell completions (auto-detects shell)
+    Install {
+        /// Override shell detection
+        #[arg(long, value_enum)]
+        shell: Option<ShellType>,
+    },
+
+    /// Uninstall shell completions
+    Uninstall {
+        /// Override shell detection
+        #[arg(long, value_enum)]
+        shell: Option<ShellType>,
+    },
+
+    /// Generate completions and print to stdout (for manual installation)
+    Generate {
+        /// Shell to generate completions for
+        #[arg(value_enum)]
+        shell: ShellType,
+    },
+}
+
+/// Supported shell types for completions
+#[derive(Clone, Copy, ValueEnum, Debug)]
+pub enum ShellType {
+    /// Bash shell
+    Bash,
+    /// Zsh shell
+    Zsh,
+    /// Fish shell
+    Fish,
+    /// PowerShell
+    #[value(name = "powershell")]
+    PowerShell,
+    /// Elvish shell
+    Elvish,
 }
 
 /// Arguments for the clipboard command
