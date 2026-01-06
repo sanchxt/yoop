@@ -19,6 +19,7 @@ yoop-core = { path = "../yoop-core", features = ["full"] }
 
 # CLI
 clap = { workspace = true }
+clap_complete = { workspace = true }
 
 # TUI
 ratatui = { workspace = true }

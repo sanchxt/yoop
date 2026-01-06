@@ -309,6 +309,7 @@ mod tests {
             is_symlink: false,
             symlink_target: None,
             is_directory: false,
+            preview: None,
         }];
 
         ResumeState::new(

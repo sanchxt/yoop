@@ -417,8 +417,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_find_timeout() {
-        let port = 53000 + (std::process::id() % 100) as u16;
-        let listener = HybridListener::new(port).await.expect("create listener");
+        let listener = HybridListener::new(0).await.expect("create listener");
 
         let code = generate_code();
         let result = listener.find(&code, Duration::from_millis(100)).await;
@@ -428,8 +427,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_hybrid_scan_empty() {
-        let port = 53100 + (std::process::id() % 100) as u16;
-        let listener = HybridListener::new(port).await.expect("create listener");
+        let listener = HybridListener::new(0).await.expect("create listener");
 
         let shares = listener.scan(Duration::from_millis(100)).await;
         assert!(shares.is_empty() || !shares.is_empty());

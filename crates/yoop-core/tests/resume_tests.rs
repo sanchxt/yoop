@@ -329,6 +329,7 @@ fn create_test_resume_state(code: &str) -> ResumeState {
             is_symlink: false,
             symlink_target: None,
             is_directory: false,
+            preview: None,
         },
         FileMetadata {
             relative_path: PathBuf::from("file2.bin"),
@@ -340,6 +341,7 @@ fn create_test_resume_state(code: &str) -> ResumeState {
             is_symlink: false,
             symlink_target: None,
             is_directory: false,
+            preview: None,
         },
     ];
 

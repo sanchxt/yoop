@@ -43,6 +43,7 @@ async fn main() -> Result<()> {
         Command::Config(args) => commands::config::run(args).await,
         Command::Diagnose(args) => commands::diagnose::run(args).await,
         Command::History(args) => commands::history::run(args).await,
+        Command::Completions(args) => commands::completions::run(args.action),
         Command::InternalClipboardHold(args) => {
             commands::internal::run_clipboard_hold(&args.content_type, args.timeout)
         }
