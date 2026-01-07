@@ -18,138 +18,123 @@ const ROOT_DIR = path.join(__dirname, "..");
 const NPM_DIR = path.join(ROOT_DIR, "npm");
 const CARGO_TOML = path.join(ROOT_DIR, "Cargo.toml");
 
-/**
- * Extract version from Cargo.toml
- */
 function getCargoVersion() {
-  const content = fs.readFileSync(CARGO_TOML, "utf8");
+    const content = fs.readFileSync(CARGO_TOML, "utf8");
 
-  // Look for version in [workspace.package] section
-  const workspaceMatch = content.match(
-    /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/
-  );
-  if (workspaceMatch) {
-    return workspaceMatch[1];
-  }
+    const workspaceMatch = content.match(
+        /\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/
+    );
+    if (workspaceMatch) {
+        return workspaceMatch[1];
+    }
 
-  // Fallback: look for version at top level
-  const topMatch = content.match(/^version\s*=\s*"([^"]+)"/m);
-  if (topMatch) {
-    return topMatch[1];
-  }
+    const topMatch = content.match(/^version\s*=\s*"([^"]+)"/m);
+    if (topMatch) {
+        return topMatch[1];
+    }
 
-  throw new Error("Could not find version in Cargo.toml");
+    throw new Error("Could not find version in Cargo.toml");
 }
 
-/**
- * Find all package.json files in npm directory
- */
 function findPackageJsonFiles() {
-  const files = [];
+    const files = [];
 
-  function walk(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    for (const entry of entries) {
-      const fullPath = path.join(dir, entry.name);
-      if (entry.isDirectory()) {
-        // Skip node_modules and bin directories
-        if (entry.name !== "node_modules" && entry.name !== "bin") {
-          walk(fullPath);
+    function walk(dir) {
+        const entries = fs.readdirSync(dir, { withFileTypes: true });
+        for (const entry of entries) {
+            const fullPath = path.join(dir, entry.name);
+            if (entry.isDirectory()) {
+                if (entry.name !== "node_modules" && entry.name !== "bin") {
+                    walk(fullPath);
+                }
+            } else if (entry.name === "package.json") {
+                files.push(fullPath);
+            }
         }
-      } else if (entry.name === "package.json") {
-        files.push(fullPath);
-      }
     }
-  }
 
-  if (fs.existsSync(NPM_DIR)) {
-    walk(NPM_DIR);
-  }
+    if (fs.existsSync(NPM_DIR)) {
+        walk(NPM_DIR);
+    }
 
-  return files;
+    return files;
 }
 
-/**
- * Update version in a package.json file
- */
 function updatePackageJson(filePath, newVersion, checkOnly) {
-  const content = fs.readFileSync(filePath, "utf8");
-  const pkg = JSON.parse(content);
-  const oldVersion = pkg.version;
-  let changed = false;
+    const content = fs.readFileSync(filePath, "utf8");
+    const pkg = JSON.parse(content);
+    const oldVersion = pkg.version;
+    let changed = false;
 
-  // Update main version
-  if (pkg.version !== newVersion) {
-    pkg.version = newVersion;
-    changed = true;
-  }
+    if (pkg.version !== newVersion) {
+        pkg.version = newVersion;
+        changed = true;
+    }
 
-  // Update optionalDependencies versions (for main package)
-  if (pkg.optionalDependencies) {
-    for (const dep of Object.keys(pkg.optionalDependencies)) {
-      if (dep.startsWith("@sanchxt/yoop-")) {
-        if (pkg.optionalDependencies[dep] !== newVersion) {
-          pkg.optionalDependencies[dep] = newVersion;
-          changed = true;
+    if (pkg.optionalDependencies) {
+        for (const dep of Object.keys(pkg.optionalDependencies)) {
+            if (dep.startsWith("@sanchxt/yoop-")) {
+                if (pkg.optionalDependencies[dep] !== newVersion) {
+                    pkg.optionalDependencies[dep] = newVersion;
+                    changed = true;
+                }
+            }
         }
-      }
     }
-  }
 
-  if (changed) {
-    const relativePath = path.relative(ROOT_DIR, filePath);
-    if (checkOnly) {
-      console.log(`  ${relativePath}: ${oldVersion} -> ${newVersion} (needs update)`);
-    } else {
-      fs.writeFileSync(filePath, JSON.stringify(pkg, null, 2) + "\n");
-      console.log(`  ${relativePath}: ${oldVersion} -> ${newVersion}`);
+    if (changed) {
+        const relativePath = path.relative(ROOT_DIR, filePath);
+        if (checkOnly) {
+            console.log(
+                `  ${relativePath}: ${oldVersion} -> ${newVersion} (needs update)`
+            );
+        } else {
+            fs.writeFileSync(filePath, JSON.stringify(pkg, null, 2) + "\n");
+            console.log(`  ${relativePath}: ${oldVersion} -> ${newVersion}`);
+        }
     }
-  }
 
-  return changed;
+    return changed;
 }
 
-/**
- * Main entry point
- */
 function main() {
-  const args = process.argv.slice(2);
-  const checkOnly = args.includes("--check");
+    const args = process.argv.slice(2);
+    const checkOnly = args.includes("--check");
 
-  console.log("Syncing npm package versions with Cargo.toml...\n");
+    console.log("Syncing npm package versions with Cargo.toml...\n");
 
-  // Get version from Cargo.toml
-  const version = getCargoVersion();
-  console.log(`Cargo.toml version: ${version}\n`);
+    const version = getCargoVersion();
+    console.log(`Cargo.toml version: ${version}\n`);
 
-  // Find and update all package.json files
-  const packageFiles = findPackageJsonFiles();
-  if (packageFiles.length === 0) {
-    console.log("No package.json files found in npm/ directory.");
-    process.exit(0);
-  }
-
-  console.log(
-    checkOnly ? "Checking package.json files:" : "Updating package.json files:"
-  );
-
-  let updatedCount = 0;
-  for (const file of packageFiles) {
-    if (updatePackageJson(file, version, checkOnly)) {
-      updatedCount++;
+    const packageFiles = findPackageJsonFiles();
+    if (packageFiles.length === 0) {
+        console.log("No package.json files found in npm/ directory.");
+        process.exit(0);
     }
-  }
 
-  console.log("");
+    console.log(
+        checkOnly
+            ? "Checking package.json files:"
+            : "Updating package.json files:"
+    );
 
-  if (updatedCount === 0) {
-    console.log("All package.json files are already up to date.");
-  } else if (checkOnly) {
-    console.log(`${updatedCount} file(s) need updating.`);
-    process.exit(1);
-  } else {
-    console.log(`Updated ${updatedCount} file(s).`);
-  }
+    let updatedCount = 0;
+    for (const file of packageFiles) {
+        if (updatePackageJson(file, version, checkOnly)) {
+            updatedCount++;
+        }
+    }
+
+    console.log("");
+
+    if (updatedCount === 0) {
+        console.log("All package.json files are already up to date.");
+    } else if (checkOnly) {
+        console.log(`${updatedCount} file(s) need updating.`);
+        process.exit(1);
+    } else {
+        console.log(`Updated ${updatedCount} file(s).`);
+    }
 }
 
 main();
