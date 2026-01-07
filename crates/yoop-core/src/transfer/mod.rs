@@ -263,11 +263,9 @@ impl ShareSession {
             return Err(Error::FileNotFound("no files to share".to_string()));
         }
 
-        // Generate previews for files
         let preview_generator = crate::preview::PreviewGenerator::new();
         for file in &mut files {
             if !file.is_directory {
-                // Find the absolute path for this file
                 for base_path in paths {
                     let absolute_path = if base_path.is_dir() {
                         base_path.join(&file.relative_path)
@@ -557,6 +555,23 @@ impl ShareSession {
                 };
                 let start_payload = protocol::encode_payload(&start)?;
                 protocol::write_frame(stream, MessageType::ChunkStart, &start_payload).await?;
+
+                let (header, ack_payload) = protocol::read_frame(stream).await?;
+                if header.message_type != MessageType::ChunkAck {
+                    return Err(Error::UnexpectedMessage {
+                        expected: "ChunkAck".to_string(),
+                        actual: format!("{:?}", header.message_type),
+                    });
+                }
+
+                let ack: ChunkAckPayload = protocol::decode_payload(&ack_payload)?;
+                if !ack.success {
+                    return Err(Error::ProtocolError(format!(
+                        "Receiver failed to create directory: {}",
+                        file.file_name()
+                    )));
+                }
+
                 tracing::debug!(
                     "Sent directory marker for file {}: {}",
                     file_index,
@@ -578,11 +593,29 @@ impl ShareSession {
                 };
                 let start_payload = protocol::encode_payload(&start)?;
                 protocol::write_frame(stream, MessageType::ChunkStart, &start_payload).await?;
+
+                let (header, ack_payload) = protocol::read_frame(stream).await?;
+                if header.message_type != MessageType::ChunkAck {
+                    return Err(Error::UnexpectedMessage {
+                        expected: "ChunkAck".to_string(),
+                        actual: format!("{:?}", header.message_type),
+                    });
+                }
+
+                let ack: ChunkAckPayload = protocol::decode_payload(&ack_payload)?;
+                if !ack.success {
+                    return Err(Error::ProtocolError(format!(
+                        "Receiver failed to create empty file: {}",
+                        file.file_name()
+                    )));
+                }
+
                 tracing::debug!(
                     "Sent empty file marker for file {}: {}",
                     file_index,
                     file.file_name()
                 );
+                continue;
             }
 
             for chunk in chunks {
@@ -1431,12 +1464,16 @@ impl ReceiveSession {
         Ok(file_list.files)
     }
 
-    async fn handle_chunk_start(
+    async fn handle_chunk_start<S>(
         &self,
+        stream: &mut S,
         start: ChunkStartPayload,
         current_writer: &mut Option<FileWriter>,
         current_file_index: &mut Option<usize>,
-    ) -> Result<()> {
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
         if *current_file_index != Some(start.file_index) {
             if let Some(writer) = current_writer.take() {
                 let _sha256 = writer.finalize().await?;
@@ -1445,7 +1482,7 @@ impl ReceiveSession {
             let file = &self.files[start.file_index];
             let output_path = self.output_dir.join(&file.relative_path);
 
-            if start.total_chunks == 0 || file.is_directory {
+            if file.is_directory {
                 tokio::fs::create_dir_all(&output_path).await.map_err(|e| {
                     Error::Io(std::io::Error::new(
                         e.kind(),
@@ -1471,6 +1508,67 @@ impl ReceiveSession {
                 }
 
                 tracing::debug!("Created directory: {}", output_path.display());
+
+                let ack = ChunkAckPayload {
+                    file_index: start.file_index,
+                    chunk_index: 0,
+                    success: true,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+
+                *current_file_index = Some(start.file_index);
+                return Ok(());
+            }
+
+            if start.total_chunks == 0 {
+                if let Some(parent) = output_path.parent() {
+                    tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                        Error::Io(std::io::Error::new(
+                            e.kind(),
+                            format!(
+                                "Failed to create parent directory {}: {}",
+                                parent.display(),
+                                e
+                            ),
+                        ))
+                    })?;
+                }
+
+                tokio::fs::File::create(&output_path).await.map_err(|e| {
+                    Error::Io(std::io::Error::new(
+                        e.kind(),
+                        format!(
+                            "Failed to create empty file {}: {}",
+                            output_path.display(),
+                            e
+                        ),
+                    ))
+                })?;
+
+                #[cfg(unix)]
+                if let Some(mode) = file.permissions {
+                    use std::os::unix::fs::PermissionsExt;
+                    let perms = std::fs::Permissions::from_mode(mode);
+                    if let Err(e) = std::fs::set_permissions(&output_path, perms) {
+                        tracing::warn!(
+                            "Failed to set permissions on file {}: {}",
+                            output_path.display(),
+                            e
+                        );
+                    }
+                }
+
+                tracing::debug!("Created empty file: {}", output_path.display());
+
+                let ack = ChunkAckPayload {
+                    file_index: start.file_index,
+                    chunk_index: 0,
+                    success: true,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+
                 *current_file_index = Some(start.file_index);
                 return Ok(());
             }
@@ -1559,8 +1657,13 @@ impl ReceiveSession {
             match header.message_type {
                 MessageType::ChunkStart => {
                     let start: ChunkStartPayload = protocol::decode_payload(&payload)?;
-                    self.handle_chunk_start(start, &mut current_writer, &mut current_file_index)
-                        .await?;
+                    self.handle_chunk_start(
+                        stream,
+                        start,
+                        &mut current_writer,
+                        &mut current_file_index,
+                    )
+                    .await?;
                 }
                 MessageType::ChunkData => {
                     self.handle_chunk_data(stream, &payload, &mut current_writer)
