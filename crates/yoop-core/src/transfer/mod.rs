@@ -531,6 +531,7 @@ impl ShareSession {
         }
     }
 
+    #[allow(clippy::too_many_lines)]
     async fn do_transfer<S>(&self, stream: &mut S) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin,

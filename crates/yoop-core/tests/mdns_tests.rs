@@ -239,6 +239,7 @@ async fn test_hybrid_listener_sequential_udp_first() {
 
 /// Test hybrid listener sequential find with mDNS preference.
 #[tokio::test]
+#[ignore = "Requires mDNS network support which doesn't work in CI"]
 async fn test_hybrid_listener_sequential_mdns_first() {
     let port = 53500 + (std::process::id() % 100) as u16;
     let listener = HybridListener::new(port).await.expect("create listener");
