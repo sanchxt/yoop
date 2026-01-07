@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.3](https://github.com/sanchxt/yoop/compare/v0.1.2...v0.1.3) (2026-01-07)
+
+
+### Features
+
+* **completions:** add install and uninstall commands with shell detection ([aacb96c](https://github.com/sanchxt/yoop/commit/aacb96cfc04c971ff857e9fe221a5f52c0c0b9ec))
+* **preview:** complete thumbnail and archive listing generation ([96cf9f1](https://github.com/sanchxt/yoop/commit/96cf9f1668a70558cbb57534f4ef12f76d4db505))
+* **preview:** integrate file previews into transfer flow ([2f9c516](https://github.com/sanchxt/yoop/commit/2f9c516f44c1a525b52c94259bfc49f06ff9a2e5))
+* shell completions and preview system ([38f8354](https://github.com/sanchxt/yoop/commit/38f8354597c27250358f7163532319c1407238a5))
+
+
+### Bug Fixes
+
+* **discovery:** use dynamic port allocation in hybrid tests ([747ff5e](https://github.com/sanchxt/yoop/commit/747ff5eb3d84276dd5dfb2c115f7c8a56831c878))
+* **transfer:** resolve directory transfer hang at 0 bits ([31ab31a](https://github.com/sanchxt/yoop/commit/31ab31a3c582bc315cd55a702b63a84d233a9785))
+
 ## [0.1.2](https://github.com/sanchxt/yoop/compare/v0.1.1...v0.1.2) (2025-12-28)
 
 
