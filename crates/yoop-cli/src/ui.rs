@@ -8,19 +8,31 @@ const BOX_WIDTH: usize = 33;
 pub struct CodeBox<'a> {
     code: &'a str,
     expire: Option<&'a str>,
+    show_qr: bool,
 }
 
 impl<'a> CodeBox<'a> {
     /// Create a new code box.
     #[must_use]
     pub const fn new(code: &'a str) -> Self {
-        Self { code, expire: None }
+        Self {
+            code,
+            expire: None,
+            show_qr: false,
+        }
     }
 
     /// Add expiration time to the box.
     #[must_use]
     pub const fn with_expire(mut self, expire: &'a str) -> Self {
         self.expire = Some(expire);
+        self
+    }
+
+    /// Enable QR code display.
+    #[must_use]
+    pub const fn with_qr(mut self, show: bool) -> Self {
+        self.show_qr = show;
         self
     }
 
@@ -41,6 +53,17 @@ impl<'a> CodeBox<'a> {
         }
 
         println!("  └{}┘", "─".repeat(BOX_WIDTH));
+
+        if self.show_qr {
+            if let Ok(qr) = yoop_core::qr::generate_ascii(self.code) {
+                println!();
+                for line in qr.lines() {
+                    println!("  {}", line);
+                }
+                println!();
+                println!("  Scan to receive: yoop://{}", self.code);
+            }
+        }
     }
 }
 

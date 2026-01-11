@@ -254,6 +254,31 @@ main {
     color: var(--text-muted);
 }
 
+.qr-container {
+    text-align: center;
+    margin: 1.5rem 0;
+}
+
+#qr-code {
+    display: inline-block;
+    padding: 1rem;
+    background: white;
+    border-radius: 8px;
+    box-shadow: var(--shadow);
+}
+
+#qr-code svg {
+    display: block;
+    width: 150px;
+    height: 150px;
+}
+
+.qr-hint {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+}
+
 #code-input-section {
     text-align: center;
 }
@@ -435,6 +460,11 @@ footer {
 
     #code-input {
         font-size: 1.25rem;
+    }
+
+    #qr-code svg {
+        width: 120px;
+        height: 120px;
     }
 }
 

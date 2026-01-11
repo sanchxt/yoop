@@ -21,6 +21,7 @@
 //! | GET | /api/network | Network info |
 //! | POST | /api/share | Start sharing (multipart upload) |
 //! | GET | /api/share/code | Get current share code |
+//! | GET | /api/share/qr | Get QR code SVG |
 //! | DELETE | /api/share | Cancel share |
 //! | POST | /api/receive | Connect to share code |
 //! | POST | /api/receive/accept | Accept transfer |
@@ -109,6 +110,7 @@ fn create_router(state: SharedState) -> Router {
         .route("/share", post(handlers::create_share))
         .route("/share", delete(handlers::cancel_share))
         .route("/share/code", get(handlers::get_share_code))
+        .route("/share/qr", get(handlers::get_share_qr))
         .route("/receive", post(handlers::start_receive))
         .route("/receive/accept", post(handlers::accept_receive))
         .route("/receive/decline", post(handlers::decline_receive))

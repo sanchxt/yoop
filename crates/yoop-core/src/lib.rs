@@ -21,6 +21,7 @@
 //! - [`history`] - Transfer history tracking and persistence
 //! - [`preview`] - File preview generation (thumbnails, text snippets)
 //! - [`protocol`] - LDRP wire protocol implementation
+//! - [`qr`] - QR code generation for share codes
 //! - [`transfer`] - File transfer engine
 //! - [`trust`] - Trusted devices management
 //! - [`web`] - Embedded web server for browser-based access
@@ -63,6 +64,7 @@ pub mod file;
 pub mod history;
 pub mod preview;
 pub mod protocol;
+pub mod qr;
 pub mod transfer;
 pub mod trust;
 

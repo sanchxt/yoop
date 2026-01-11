@@ -310,7 +310,7 @@ impl Default for UiConfig {
     fn default() -> Self {
         Self {
             theme: "auto".to_string(),
-            show_qr: true,
+            show_qr: false,
             notifications: true,
             sound: true,
         }
