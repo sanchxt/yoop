@@ -410,10 +410,21 @@ impl Config {
     ///
     /// If the configuration file doesn't exist, returns the default configuration.
     ///
+    /// When the `update` feature is enabled, this function also runs any pending
+    /// migrations before loading the configuration. This ensures that config files
+    /// are migrated to the current version regardless of how the user updated
+    /// (npm install, yoop update, etc.).
+    ///
     /// # Errors
     ///
-    /// Returns an error if the configuration file exists but cannot be read or parsed.
+    /// Returns an error if the configuration file exists but cannot be read or parsed,
+    /// or if migrations fail.
     pub fn load() -> Result<Self> {
+        #[cfg(feature = "update")]
+        {
+            crate::migration::migrate_if_needed()?;
+        }
+
         let path = Self::config_path();
         if !path.exists() {
             return Ok(Self::default());

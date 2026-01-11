@@ -9,13 +9,50 @@ pub mod version;
 #[cfg(feature = "update")]
 pub mod migrations;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::error::Result;
 use crate::update::SchemaVersion;
 
 pub use backup::{BackupId, BackupInfo, BackupManager};
 pub use version::{MigrationHistoryEntry, MigrationState};
+
+/// Get the application data directory.
+#[must_use]
+pub fn data_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("com", "yoop", "Yoop").map(|dirs| dirs.data_dir().to_path_buf())
+}
+
+/// Run any pending migrations if the app version is newer than the schema version.
+///
+/// This function should be called at application startup (e.g., during config loading)
+/// to ensure data files are migrated to the current version regardless of how the
+/// user updated (npm install, yoop update, etc.).
+///
+/// The function operates silently - it only returns an error if migration fails.
+/// Successful migrations and "no migration needed" cases return `Ok(())`.
+///
+/// # Errors
+///
+/// Returns an error if migrations fail. On failure, attempts to restore from backup.
+pub fn migrate_if_needed() -> Result<()> {
+    let data_dir = match data_dir() {
+        Some(dir) => dir,
+        None => return Ok(()),
+    };
+
+    let app_version = SchemaVersion::parse(crate::VERSION)?;
+    let state = MigrationState::load(&data_dir)?;
+
+    if state.schema_version >= app_version {
+        return Ok(());
+    }
+
+    let manager = MigrationManager::new(data_dir);
+    manager.run(&state.schema_version, &app_version, true)?;
+
+    Ok(())
+}
 
 /// Trait for implementing database/schema migrations between versions.
 #[allow(clippy::wrong_self_convention)]
