@@ -26,6 +26,8 @@ use super::ReceiveArgs;
 pub async fn run(args: ReceiveArgs) -> Result<()> {
     let global_config = super::load_config();
 
+    super::spawn_update_check();
+
     let code = yoop_core::code::ShareCode::parse(&args.code)?;
 
     if !args.quiet && !args.json {

@@ -15,7 +15,7 @@ name = "yoop"
 path = "src/main.rs"
 
 [dependencies]
-yoop-core = { path = "../yoop-core", features = ["full"] }
+yoop-core = { path = "../yoop-core", features = ["mdns", "web"] }
 
 # CLI
 clap = { workspace = true }
@@ -41,12 +41,19 @@ serde_json = { workspace = true }
 # UUID
 uuid = { workspace = true }
 
+# Time
+chrono = { workspace = true }
+
 # Clipboard (for internal holder command)
 arboard = { workspace = true }
 image = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+
+[features]
+default = ["update"]
+update = ["yoop-core/update"]
 
 [lints]
 workspace = true

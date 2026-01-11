@@ -11,6 +11,49 @@ pub fn load_config() -> yoop_core::config::Config {
     yoop_core::config::Config::load().unwrap_or_default()
 }
 
+/// Spawn a background task to check for updates.
+///
+/// This function spawns a non-blocking background task that:
+/// - Checks if auto_check and notify are enabled in config
+/// - Respects the check_interval to avoid excessive API calls
+/// - Displays a message to stderr if an update is available
+/// - Silently ignores errors and no-update cases
+///
+/// This should be called by long-running commands (share, receive, clipboard).
+#[cfg(feature = "update")]
+pub fn spawn_update_check() {
+    use yoop_core::config::Config;
+    use yoop_core::update::version_check::VersionChecker;
+
+    tokio::spawn(async move {
+        let Ok(mut config) = Config::load() else {
+            return;
+        };
+
+        if !config.update.auto_check || !config.update.notify {
+            return;
+        }
+
+        let checker = VersionChecker::new();
+
+        match checker.check_with_cache(&mut config).await {
+            Ok(Some(status)) if status.update_available => {
+                eprintln!();
+                eprintln!(
+                    "  Update available: {} -> {}",
+                    status.current_version, status.latest_version
+                );
+                eprintln!("  Run 'yoop update' to upgrade.");
+                eprintln!();
+            }
+            _ => {}
+        }
+    });
+}
+
+#[cfg(not(feature = "update"))]
+pub fn spawn_update_check() {}
+
 pub mod clipboard;
 pub mod completions;
 pub mod config;
@@ -22,6 +65,8 @@ pub mod scan;
 pub mod send;
 pub mod share;
 pub mod trust;
+#[cfg(feature = "update")]
+pub mod update;
 pub mod web;
 
 /// Yoop - Cross-platform local network file sharing
@@ -70,6 +115,10 @@ pub enum Command {
 
     /// Generate shell completions
     Completions(CompletionsArgs),
+
+    /// Check for and install updates
+    #[cfg(feature = "update")]
+    Update(UpdateArgs),
 
     /// Internal: hold clipboard content (not user-facing, used by spawn)
     #[command(hide = true)]
@@ -414,4 +463,33 @@ pub struct InternalClipboardHoldArgs {
     /// Timeout in seconds before the holder exits
     #[arg(long, default_value = "300")]
     pub timeout: u64,
+}
+
+/// Arguments for the update command
+#[cfg(feature = "update")]
+#[derive(Parser)]
+pub struct UpdateArgs {
+    /// Only check for updates, don't install
+    #[arg(long)]
+    pub check: bool,
+
+    /// Rollback to previous version (restores backup)
+    #[arg(long)]
+    pub rollback: bool,
+
+    /// Force update even if already on latest version
+    #[arg(long)]
+    pub force: bool,
+
+    /// Specify package manager: npm, pnpm, yarn, or bun
+    #[arg(long)]
+    pub package_manager: Option<String>,
+
+    /// Output in JSON format
+    #[arg(long)]
+    pub json: bool,
+
+    /// Minimal output
+    #[arg(short, long)]
+    pub quiet: bool,
 }

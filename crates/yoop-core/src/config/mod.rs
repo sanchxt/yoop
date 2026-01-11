@@ -48,6 +48,8 @@ pub struct Config {
     pub web: WebConfig,
     /// UI settings
     pub ui: UiConfig,
+    /// Update settings
+    pub update: UpdateConfig,
 }
 
 impl Default for Config {
@@ -62,6 +64,7 @@ impl Default for Config {
             trust: TrustConfig::default(),
             web: WebConfig::default(),
             ui: UiConfig::default(),
+            update: UpdateConfig::default(),
         }
     }
 }
@@ -313,6 +316,91 @@ impl Default for UiConfig {
             show_qr: false,
             notifications: true,
             sound: true,
+        }
+    }
+}
+
+/// Update configuration options.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateConfig {
+    /// Enable automatic update checks
+    pub auto_check: bool,
+    /// Interval between automatic checks
+    #[serde(with = "humantime_serde")]
+    pub check_interval: Duration,
+    /// Preferred package manager (None = auto-detect)
+    pub package_manager: Option<PackageManagerKind>,
+    /// Whether to show update notifications
+    pub notify: bool,
+    /// Timestamp of last update check (seconds since UNIX epoch)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_check: Option<u64>,
+}
+
+impl Default for UpdateConfig {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            check_interval: Duration::from_secs(24 * 60 * 60),
+            package_manager: None,
+            notify: true,
+            last_check: None,
+        }
+    }
+}
+
+/// Package manager kind for update configuration.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum PackageManagerKind {
+    /// npm package manager
+    Npm,
+    /// pnpm package manager
+    Pnpm,
+    /// Yarn package manager
+    Yarn,
+    /// Bun package manager
+    Bun,
+}
+
+impl PackageManagerKind {
+    /// Check if this package manager is available in PATH.
+    #[must_use]
+    pub fn is_available(self) -> bool {
+        #[cfg(feature = "update")]
+        {
+            use crate::update::package_manager::PackageManager;
+            let pm: PackageManager = self.into();
+            pm.is_available()
+        }
+        #[cfg(not(feature = "update"))]
+        {
+            false
+        }
+    }
+}
+
+#[cfg(feature = "update")]
+impl From<PackageManagerKind> for crate::update::package_manager::PackageManager {
+    fn from(kind: PackageManagerKind) -> Self {
+        match kind {
+            PackageManagerKind::Npm => Self::Npm,
+            PackageManagerKind::Pnpm => Self::Pnpm,
+            PackageManagerKind::Yarn => Self::Yarn,
+            PackageManagerKind::Bun => Self::Bun,
+        }
+    }
+}
+
+#[cfg(feature = "update")]
+impl From<crate::update::package_manager::PackageManager> for PackageManagerKind {
+    fn from(pm: crate::update::package_manager::PackageManager) -> Self {
+        match pm {
+            crate::update::package_manager::PackageManager::Npm => Self::Npm,
+            crate::update::package_manager::PackageManager::Pnpm => Self::Pnpm,
+            crate::update::package_manager::PackageManager::Yarn => Self::Yarn,
+            crate::update::package_manager::PackageManager::Bun => Self::Bun,
         }
     }
 }
