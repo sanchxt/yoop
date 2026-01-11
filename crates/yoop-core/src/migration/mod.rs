@@ -36,9 +36,8 @@ pub fn data_dir() -> Option<PathBuf> {
 ///
 /// Returns an error if migrations fail. On failure, attempts to restore from backup.
 pub fn migrate_if_needed() -> Result<()> {
-    let data_dir = match data_dir() {
-        Some(dir) => dir,
-        None => return Ok(()),
+    let Some(data_dir) = data_dir() else {
+        return Ok(());
     };
 
     let app_version = SchemaVersion::parse(crate::VERSION)?;
