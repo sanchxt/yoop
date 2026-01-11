@@ -24,6 +24,8 @@ const elements = {
     shareCodeDisplay: document.getElementById("share-code-display"),
     shareCode: document.getElementById("share-code"),
     expireTime: document.getElementById("expire-time"),
+    qrCodeContainer: document.getElementById("qr-code-container"),
+    qrCode: document.getElementById("qr-code"),
     shareStatus: document.getElementById("share-status"),
     btnCancelShare: document.getElementById("btn-cancel-share"),
 
@@ -221,6 +223,8 @@ function resetShareUI() {
     elements.dropZone.hidden = false;
     elements.selectedFiles.hidden = state.selectedFiles.length === 0;
     elements.shareCodeDisplay.hidden = true;
+    elements.qrCodeContainer.hidden = true;
+    elements.qrCode.innerHTML = "";
 }
 
 function resetReceiveUI() {
@@ -326,6 +330,13 @@ async function startShare() {
         elements.selectedFiles.hidden = true;
         elements.shareCodeDisplay.hidden = false;
 
+        if (result.qr_svg) {
+            elements.qrCode.innerHTML = result.qr_svg;
+            elements.qrCodeContainer.hidden = false;
+        } else {
+            elements.qrCodeContainer.hidden = true;
+        }
+
         updateExpireTime();
         state.expireInterval = setInterval(updateExpireTime, 1000);
 
@@ -371,12 +382,25 @@ async function connectToCode() {
 
             let previewHtml = "";
             if (file.preview) {
-                if (file.preview.preview_type === "thumbnail" && file.preview.data) {
+                if (
+                    file.preview.preview_type === "thumbnail" &&
+                    file.preview.data
+                ) {
                     previewHtml = `<img class="file-preview-img" src="data:${file.preview.mime_type};base64,${file.preview.data}" alt="Preview">`;
-                } else if (file.preview.preview_type === "text" && file.preview.data) {
-                    const snippet = file.preview.data.substring(0, 60).replace(/\n/g, " ");
-                    previewHtml = `<span class="file-preview-text">"${snippet}${file.preview.data.length > 60 ? "..." : ""}"</span>`;
-                } else if (file.preview.preview_type === "archive" && file.preview.file_count) {
+                } else if (
+                    file.preview.preview_type === "text" &&
+                    file.preview.data
+                ) {
+                    const snippet = file.preview.data
+                        .substring(0, 60)
+                        .replace(/\n/g, " ");
+                    previewHtml = `<span class="file-preview-text">"${snippet}${
+                        file.preview.data.length > 60 ? "..." : ""
+                    }"</span>`;
+                } else if (
+                    file.preview.preview_type === "archive" &&
+                    file.preview.file_count
+                ) {
                     previewHtml = `<span class="file-preview-meta">(${file.preview.file_count} files)</span>`;
                 }
             }

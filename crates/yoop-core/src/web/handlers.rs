@@ -68,6 +68,11 @@ pub struct ShareResponse {
     expires_in: u64,
     /// Files being shared
     files: Vec<FileInfo>,
+    /// QR code SVG (if available)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    qr_svg: Option<String>,
+    /// Deep link URL for mobile scanning
+    deep_link: String,
 }
 
 /// File information for responses.
@@ -308,10 +313,15 @@ pub async fn create_share(
         share_wait_task(state_clone).await;
     });
 
+    let deep_link = crate::qr::create_deep_link(&code, &crate::qr::QrConfig::default());
+    let qr_svg = crate::qr::generate_svg(&code).ok();
+
     Ok(Json(ShareResponse {
         code,
         expires_in: 300,
         files,
+        qr_svg,
+        deep_link,
     }))
 }
 
@@ -382,6 +392,24 @@ pub async fn get_share_code(
         || Err(ApiError::not_found("No active share")),
         |c| Ok(Json(serde_json::json!({ "code": c }))),
     )
+}
+
+/// GET /api/share/qr - Get QR code SVG for current share.
+pub async fn get_share_qr(State(state): State<SharedState>) -> ApiResult<Response> {
+    let code = state
+        .current_share_code()
+        .await
+        .ok_or_else(|| ApiError::not_found("No active share"))?;
+
+    let svg = crate::qr::generate_svg(&code)
+        .map_err(|e| ApiError::internal(format!("Failed to generate QR code: {e}")))?;
+
+    Ok(Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "image/svg+xml")
+        .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from(svg))
+        .unwrap())
 }
 
 // ============================================================================

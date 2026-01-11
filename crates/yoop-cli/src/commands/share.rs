@@ -49,7 +49,7 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     let total_size: u64 = files.iter().map(|f| f.size).sum();
     let code = session.code().to_string();
 
-    display_share_info(&files, total_size, &code, &args)?;
+    display_share_info(&files, total_size, &code, &args, &global_config)?;
 
     let progress_rx = session.progress();
     let expire_duration =
@@ -99,6 +99,7 @@ fn display_share_info(
     total_size: u64,
     code: &str,
     args: &ShareArgs,
+    global_config: &yoop_core::config::Config,
 ) -> Result<()> {
     let total_files = files.len();
 
@@ -128,7 +129,10 @@ fn display_share_info(
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else if !args.quiet {
-        CodeBox::new(code).with_expire(&args.expire).display();
+        CodeBox::new(code)
+            .with_expire(&args.expire)
+            .with_qr(global_config.ui.show_qr)
+            .display();
         println!();
     }
 

@@ -15,13 +15,15 @@ Yoop enables seamless peer-to-peer file transfers over local networks using simp
 -   **Cross-platform**: Works on Windows, Linux, and macOS
 -   **No account required**: Zero configuration, no cloud dependency
 -   **Simple 4-character codes**: Easy discovery without IP addresses
+-   **QR code support**: Display scannable codes for upcoming mobile app (experimental)
 -   **Dual discovery**: UDP broadcast + mDNS/DNS-SD for reliable device discovery
 -   **Private & secure**: TLS 1.3 encryption, data never leaves local network
 -   **Fast transfers**: Chunked transfers with xxHash64 verification
 -   **Resume capability**: Interrupted transfers can be resumed automatically
--   **CLI interface**: Full-featured command-line tool
--   **Web interface**: Browser-based UI for devices without CLI access
+-   **CLI + Web interface**: Full-featured command-line tool and browser-based UI
+-   **Trusted devices**: Ed25519 signature-based authentication for direct transfers
 -   **Clipboard sharing**: One-shot transfer and live bidirectional sync
+-   **Shell completions**: Bash, Zsh, Fish, PowerShell, Elvish support
 
 ## Quick Start
 
@@ -51,23 +53,37 @@ yoop receive A7K9 --output ~/Downloads/
 yoop receive A7K9 --batch
 ```
 
-### Clipboard Sharing
+### Clipboard Sharing (Unique Feature!)
 
 ```bash
-# Share current clipboard content (generates a code)
-yoop clipboard share
+# One-shot clipboard sharing
+yoop clipboard share               # Share current clipboard
+yoop clipboard receive A7K9        # Receive clipboard content
 
-# Receive clipboard content using a code
-yoop clipboard receive A7K9
-
-# Start bidirectional clipboard sync (host)
-yoop clipboard sync
-
-# Join existing sync session
-yoop clipboard sync A7K9
+# Live bidirectional sync (sync clipboard changes in real-time)
+yoop clipboard sync                # Host sync session
+yoop clipboard sync A7K9           # Join sync session
 ```
 
+Supports text and images. Changes sync automatically across devices!
+
 ## Installation
+
+### via npm (Recommended)
+
+```bash
+# npm
+npm install -g yoop
+
+# pnpm
+pnpm add -g yoop
+
+# yarn
+yarn global add yoop
+
+# bun
+bun add -g yoop
+```
 
 ### From Source
 
@@ -81,9 +97,23 @@ cargo install --path crates/yoop-cli
 
 ### Pre-built Binaries
 
-Pre-built binaries and package manager support are planned for future releases.
+Pre-built binaries for Windows, Linux, and macOS are coming soon.
+
+## Shell Completions
+
+Install tab completions for your shell:
+
+```bash
+yoop completions install           # Auto-detect shell and install
+yoop completions install --shell zsh
+yoop completions generate bash     # Print to stdout
+```
+
+Supported: Bash, Zsh, Fish, PowerShell, Elvish
 
 ## How It Works
+
+**Code-based transfers:**
 
 1. **Sender** shares files and gets a 4-character code (e.g., `A 7 K 9`)
 2. **Receiver** enters the code on their device
@@ -91,6 +121,8 @@ Pre-built binaries and package manager support are planned for future releases.
 4. **Transfer** occurs directly over TLS 1.3 encrypted TCP connection
 5. **Verification** using xxHash64 per chunk, SHA-256 for complete file
 6. **Resume** automatic resumption of interrupted transfers from last checkpoint
+
+**For trusted devices:** Direct connection using Ed25519 signatures (no code needed)
 
 ```
 ┌─────────────┐           UDP Broadcast            ┌──────────────┐
@@ -105,25 +137,67 @@ Pre-built binaries and package manager support are planned for future releases.
 
 ```bash
 # Sharing & Receiving
-yoop share <files...>           # Share files/folders
-yoop receive <code>             # Receive with code
+yoop share <files...>              # Share files/folders
+yoop receive <code>                # Receive with code
+yoop send <device> <files...>      # Send to trusted device (no code)
 
 # Clipboard Sharing
-yoop clipboard share            # Share clipboard content
-yoop clipboard receive <code>   # Receive clipboard content
-yoop clipboard sync [code]      # Bidirectional clipboard sync
+yoop clipboard share               # Share clipboard content
+yoop clipboard receive <code>      # Receive clipboard content
+yoop clipboard sync [code]         # Bidirectional clipboard sync
 
-# Utilities
-yoop scan                       # Scan for active shares on network
-yoop web                        # Start web interface
-yoop config                     # Manage configuration
-yoop diagnose                   # Network diagnostics
-yoop history                    # View transfer history
+# Device & Network Management
+yoop trust list                    # Manage trusted devices
+yoop scan                          # Scan for active shares
+yoop diagnose                      # Network diagnostics
 
-# Planned Features
-yoop send <device> <files>      # Send to trusted device (in development)
-yoop trust list                 # Manage trusted devices (in development)
+# Configuration & Utilities
+yoop config                        # Manage configuration
+yoop history                       # View transfer history
+yoop web                           # Start web interface
+yoop completions install           # Install shell completions
 ```
+
+## Web Interface
+
+Start a browser-based UI for devices without CLI access:
+
+```bash
+yoop web                    # Start on default port 8080
+yoop web --port 9000        # Custom port
+yoop web --auth             # Require authentication
+yoop web --localhost-only   # Bind to localhost only
+```
+
+**Features:**
+
+-   Drag-and-drop file sharing
+-   QR codes with deep links (for future mobile app integration)
+-   File previews (images, text, archives)
+-   Real-time transfer progress
+-   No installation required (just open in browser)
+
+Access at `http://[your-ip]:8080` from any device on the network.
+
+## Trusted Devices
+
+Send files directly to trusted devices without share codes:
+
+```bash
+# First transfer: Use share code
+yoop share file.txt
+# After accepting, you'll be prompted to trust the device
+
+# Subsequent transfers: Direct send (no code needed)
+yoop send "Device-Name" file.txt
+
+# Manage trusted devices
+yoop trust list                    # List all trusted devices
+yoop trust set "Name" --level full # Set trust level
+yoop trust remove "Name"           # Remove device
+```
+
+**Security:** Uses Ed25519 signatures for authentication. No MITM attacks possible.
 
 ## Configuration
 
@@ -139,6 +213,7 @@ Example configuration:
 [general]
 device_name = "My-Laptop"
 default_expire = "5m"
+default_output = "~/Downloads"
 
 [network]
 port = 52525
@@ -152,7 +227,25 @@ verify_checksum = true
 [security]
 tls_verify = true
 rate_limit_attempts = 3
+
+[trust]
+enabled = true
+auto_prompt = true
+default_level = "ask_each_time"
+
+[history]
+enabled = true
+max_entries = 100
+
+[ui]
+show_qr = false  # Enable QR codes (for future mobile app)
+
+[web]
+port = 8080
+auth = false
 ```
+
+See all options: `yoop config list`
 
 ## Development
 
@@ -189,6 +282,8 @@ cargo test --lib --workspace
 
 # Integration tests only
 cargo test --test integration_transfer
+cargo test --test integration_trust
+cargo test --test integration_clipboard
 
 # With output
 cargo test -- --nocapture
@@ -205,6 +300,9 @@ cargo clippy --workspace -- -D warnings
 
 # Check without building
 cargo check --workspace
+
+# Generate documentation
+cargo doc --workspace --open
 ```
 
 ## Architecture
