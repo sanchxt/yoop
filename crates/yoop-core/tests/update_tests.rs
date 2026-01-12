@@ -26,7 +26,13 @@ fn test_update_config_with_package_manager() {
     };
 
     let result = PackageManager::detect(&config);
-    assert!(result.is_ok());
+
+    if PackageManager::Pnpm.is_available() {
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PackageManager::Pnpm);
+    } else {
+        assert!(result.is_err());
+    }
 }
 
 #[test]
@@ -267,16 +273,31 @@ fn test_package_manager_detection_priority() {
         ..Default::default()
     };
     let result = PackageManager::detect(&config);
-    assert!(result.is_ok());
+    if PackageManager::Pnpm.is_available() {
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PackageManager::Pnpm);
+    } else {
+        assert!(result.is_err());
+    }
 
     let config = UpdateConfig::default();
     env::set_var("YOOP_PACKAGE_MANAGER", "yarn");
     let result = PackageManager::detect(&config);
     env::remove_var("YOOP_PACKAGE_MANAGER");
-    assert!(result.is_ok());
+    if PackageManager::Yarn.is_available() {
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PackageManager::Yarn);
+    } else {
+        assert!(result.is_err());
+    }
 
     env::set_var("npm_config_user_agent", "bun/1.0.0");
     let result = PackageManager::detect(&config);
     env::remove_var("npm_config_user_agent");
-    assert!(result.is_ok());
+    if PackageManager::Bun.is_available() {
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), PackageManager::Bun);
+    } else {
+        assert!(result.is_err());
+    }
 }
