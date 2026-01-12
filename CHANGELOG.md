@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.4](https://github.com/sanchxt/yoop/compare/v0.1.3...v0.1.4) (2026-01-12)
+
+
+### Features
+
+* add self-update command with automatic migrations ([#16](https://github.com/sanchxt/yoop/issues/16)) ([ff89a41](https://github.com/sanchxt/yoop/commit/ff89a41d4c827f1eb5eabe2d16a80cc9eafcb615))
+* **qr:** add QR code support for share codes ([#14](https://github.com/sanchxt/yoop/issues/14)) ([36ab009](https://github.com/sanchxt/yoop/commit/36ab009a71ff503590601c1f951e983fb372b777))
+
 ## [0.1.3](https://github.com/sanchxt/yoop/compare/v0.1.2...v0.1.3) (2026-01-07)
 
 
