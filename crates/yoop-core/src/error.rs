@@ -226,6 +226,29 @@ pub enum Error {
     /// Update command execution failed
     #[error("update command failed: {0}")]
     UpdateCommandFailed(String),
+
+    /// File system watcher error
+    #[error("file watcher error: {0}")]
+    WatcherError(String),
+
+    /// Sync session error
+    #[error("sync error: {0}")]
+    SyncError(String),
+
+    /// File conflict detected during sync
+    #[error("sync conflict on '{path}': local and remote both modified")]
+    SyncConflict {
+        /// Path where conflict occurred
+        path: String,
+    },
+
+    /// Directory not found
+    #[error("directory not found: {0}")]
+    DirectoryNotFound(String),
+
+    /// Sync operation failed
+    #[error("sync operation failed: {0}")]
+    SyncOperationFailed(String),
 }
 
 impl Error {
