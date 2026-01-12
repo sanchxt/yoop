@@ -244,8 +244,12 @@ mod tests {
 
         let result = PackageManager::detect(&config);
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PackageManager::Npm);
+        if PackageManager::Npm.is_available() {
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), PackageManager::Npm);
+        } else {
+            assert!(result.is_err());
+        }
     }
 
     #[test]

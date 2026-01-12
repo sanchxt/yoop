@@ -1,6 +1,6 @@
 //! Migration from version 0.1.x to 0.2.x.
 //!
-//! This migration adds the [update] section to the configuration file.
+//! This migration adds the `[update]` section to the configuration file.
 
 use std::fs;
 use std::path::Path;
@@ -10,7 +10,7 @@ use crate::error::Result;
 use crate::migration::Migration;
 use crate::update::SchemaVersion;
 
-/// Migration from v0.1.x to v0.2.x adding [update] configuration section.
+/// Migration from v0.1.x to v0.2.x adding `[update]` configuration section.
 #[allow(non_camel_case_types)]
 pub struct V0_1ToV0_2;
 

@@ -20,8 +20,8 @@ categories = ["command-line-utilities", "network-programming"]
 tokio = { version = "1.43", features = ["full"] }
 
 # TLS and crypto
-tokio-rustls = "0.26"
-rustls = "0.23"
+tokio-rustls = { version = "0.26", default-features = false, features = ["logging", "tls12", "ring"] }
+rustls = { version = "0.23", default-features = false, features = ["logging", "std", "tls12", "ring"] }
 rustls-pemfile = "2"
 rcgen = "0.13"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
