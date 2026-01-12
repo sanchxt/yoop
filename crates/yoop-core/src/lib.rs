@@ -71,6 +71,12 @@ pub mod trust;
 #[cfg(feature = "web")]
 pub mod web;
 
+#[cfg(feature = "update")]
+pub mod update;
+
+#[cfg(feature = "update")]
+pub mod migration;
+
 pub use error::{Error, Result};
 
 /// Library version

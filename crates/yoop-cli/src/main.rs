@@ -44,6 +44,8 @@ async fn main() -> Result<()> {
         Command::Diagnose(args) => commands::diagnose::run(args).await,
         Command::History(args) => commands::history::run(args).await,
         Command::Completions(args) => commands::completions::run(args.action),
+        #[cfg(feature = "update")]
+        Command::Update(args) => commands::update::run(args).await,
         Command::InternalClipboardHold(args) => {
             commands::internal::run_clipboard_hold(&args.content_type, args.timeout)
         }

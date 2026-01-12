@@ -187,6 +187,45 @@ pub enum Error {
     /// Unsupported clipboard content type
     #[error("unsupported clipboard content type: {0}")]
     UnsupportedClipboardType(String),
+
+    /// Migration failed
+    #[error("migration failed from {from} to {to}: {reason}")]
+    MigrationFailed {
+        /// Version migrating from
+        from: String,
+        /// Version migrating to
+        to: String,
+        /// Reason for failure
+        reason: String,
+    },
+
+    /// Backup operation failed
+    #[error("backup failed: {0}")]
+    BackupFailed(String),
+
+    /// Rollback operation failed
+    #[error("rollback failed: {0}")]
+    RollbackFailed(String),
+
+    /// No backup available
+    #[error("no backup available for rollback")]
+    NoBackupAvailable,
+
+    /// Update check failed
+    #[error("failed to check for updates: {0}")]
+    UpdateCheckFailed(String),
+
+    /// Already on latest version
+    #[error("already on the latest version ({0})")]
+    AlreadyLatest(String),
+
+    /// Package manager not found
+    #[error("package manager '{0}' not found in PATH")]
+    PackageManagerNotFound(String),
+
+    /// Update command execution failed
+    #[error("update command failed: {0}")]
+    UpdateCommandFailed(String),
 }
 
 impl Error {
@@ -221,5 +260,40 @@ impl Error {
                 | Self::Timeout(_)
                 | Self::KeepAliveFailed(_)
         )
+    }
+
+    /// Returns a helpful suggestion for resolving the error, if applicable.
+    #[must_use]
+    pub fn suggestion(&self) -> Option<&'static str> {
+        match self {
+            Self::PackageManagerNotFound(_) => Some(
+                "Install Node.js (includes npm) from https://nodejs.org\n\
+                 Or install pnpm: npm install -g pnpm\n\
+                 Or install yarn: npm install -g yarn\n\
+                 Or install bun: curl -fsSL https://bun.sh/install | bash",
+            ),
+            Self::UpdateCheckFailed(_) => Some(
+                "Check your internet connection and try again.\n\
+                 You can also manually check: https://www.npmjs.com/package/yoop",
+            ),
+            Self::MigrationFailed { .. } => Some(
+                "Your data has been backed up. Try:\n\
+                   yoop update --rollback",
+            ),
+            Self::UpdateCommandFailed(_) => Some(
+                "Try running the update manually:\n\
+                   npm install -g yoop\n\
+                 Or check permissions (may need sudo on some systems)",
+            ),
+            Self::NoBackupAvailable => Some(
+                "No backup found to rollback to. You may need to reinstall manually:\n\
+                   npm install -g yoop",
+            ),
+            Self::RollbackFailed(_) => Some(
+                "Failed to rollback. You may need to manually reinstall:\n\
+                   npm install -g yoop",
+            ),
+            _ => None,
+        }
     }
 }

@@ -29,6 +29,8 @@ fn create_transfer_config(global_config: &Config) -> TransferConfig {
 
 /// Run the clipboard command.
 pub async fn run(args: ClipboardArgs) -> Result<()> {
+    super::spawn_update_check();
+
     match args.action {
         ClipboardAction::Share(share_args) => run_share(share_args, args.quiet, args.json).await,
         ClipboardAction::Receive(recv_args) => run_receive(recv_args, args.quiet, args.json).await,

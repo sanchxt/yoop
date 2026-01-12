@@ -139,6 +139,23 @@ pub async fn run(args: ConfigArgs) -> Result<()> {
             println!("  notifications = {}", config.ui.notifications);
             println!("  sound = {}", config.ui.sound);
             println!();
+
+            // [update]
+            println!("[update]");
+            println!("  auto_check = {}", config.update.auto_check);
+            println!(
+                "  check_interval = \"{}s\"",
+                config.update.check_interval.as_secs()
+            );
+            println!(
+                "  package_manager = {}",
+                config.update.package_manager.map_or_else(
+                    || "auto".to_string(),
+                    |pm| format!("{:?}", pm).to_lowercase()
+                )
+            );
+            println!("  notify = {}", config.update.notify);
+            println!();
         }
 
         ConfigAction::List => {
@@ -197,6 +214,14 @@ pub async fn run(args: ConfigArgs) -> Result<()> {
             println!("  ui.show_qr          Show QR codes (true/false)");
             println!("  ui.notifications    Enable notifications (true/false)");
             println!("  ui.sound            Play sound on complete (true/false)");
+            println!();
+            println!("[update]");
+            println!("  update.auto_check       Enable automatic update checks (true/false)");
+            println!("  update.check_interval   Interval between checks (e.g., 24h, 7d)");
+            println!(
+                "  update.package_manager  Preferred package manager (npm, pnpm, yarn, bun, auto)"
+            );
+            println!("  update.notify           Show update notifications (true/false)");
             println!();
         }
 
@@ -284,6 +309,15 @@ fn get_config_value(config: &yoop_core::config::Config, key: &str) -> Option<Str
         "ui.show_qr" => Some(config.ui.show_qr.to_string()),
         "ui.notifications" => Some(config.ui.notifications.to_string()),
         "ui.sound" => Some(config.ui.sound.to_string()),
+
+        // update
+        "update.auto_check" => Some(config.update.auto_check.to_string()),
+        "update.check_interval" => Some(format!("{}s", config.update.check_interval.as_secs())),
+        "update.package_manager" => Some(config.update.package_manager.map_or_else(
+            || "auto".to_string(),
+            |pm| format!("{:?}", pm).to_lowercase(),
+        )),
+        "update.notify" => Some(config.update.notify.to_string()),
 
         _ => None,
     }
@@ -478,6 +512,36 @@ fn set_config_value(
         }
         "ui.sound" => {
             config.ui.sound = value.parse()?;
+            Ok(true)
+        }
+
+        // update
+        "update.auto_check" => {
+            config.update.auto_check = value.parse()?;
+            Ok(true)
+        }
+        "update.check_interval" => {
+            config.update.check_interval = parse_duration(value)?;
+            Ok(true)
+        }
+        "update.package_manager" => {
+            if value == "auto" || value.is_empty() {
+                config.update.package_manager = None;
+            } else {
+                config.update.package_manager = Some(match value.to_lowercase().as_str() {
+                    "npm" => yoop_core::config::PackageManagerKind::Npm,
+                    "pnpm" => yoop_core::config::PackageManagerKind::Pnpm,
+                    "yarn" => yoop_core::config::PackageManagerKind::Yarn,
+                    "bun" => yoop_core::config::PackageManagerKind::Bun,
+                    _ => {
+                        anyhow::bail!("Invalid package manager. Use: npm, pnpm, yarn, bun, or auto")
+                    }
+                });
+            }
+            Ok(true)
+        }
+        "update.notify" => {
+            config.update.notify = value.parse()?;
             Ok(true)
         }
 

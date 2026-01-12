@@ -24,6 +24,8 @@ use crate::ui::{format_remaining, parse_duration, CodeBox};
 pub async fn run(args: ShareArgs) -> Result<()> {
     let global_config = super::load_config();
 
+    super::spawn_update_check();
+
     let compress =
         args.compress || matches!(global_config.transfer.compression, CompressionMode::Always);
 
