@@ -38,6 +38,11 @@ impl PackageManager {
         }
 
         if let Some(pm) = Self::detect_from_environment() {
+            if !pm.is_available() {
+                return Err(Error::Internal(format!(
+                    "package manager '{pm}' from environment not found in PATH"
+                )));
+            }
             return Ok(pm);
         }
 
@@ -225,12 +230,17 @@ mod tests {
 
         let config = UpdateConfig::default();
 
+        env::remove_var("npm_config_user_agent");
         env::set_var("YOOP_PACKAGE_MANAGER", "pnpm");
         let result = PackageManager::detect(&config);
         env::remove_var("YOOP_PACKAGE_MANAGER");
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PackageManager::Pnpm);
+        if PackageManager::Pnpm.is_available() {
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), PackageManager::Pnpm);
+        } else {
+            assert!(result.is_err());
+        }
     }
 
     #[test]
@@ -258,12 +268,17 @@ mod tests {
 
         let config = UpdateConfig::default();
 
+        env::remove_var("YOOP_PACKAGE_MANAGER");
         env::set_var("npm_config_user_agent", "yarn/1.22.19 npm/? node/v18.0.0");
         let result = PackageManager::detect(&config);
         env::remove_var("npm_config_user_agent");
 
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), PackageManager::Yarn);
+        if PackageManager::Yarn.is_available() {
+            assert!(result.is_ok());
+            assert_eq!(result.unwrap(), PackageManager::Yarn);
+        } else {
+            assert!(result.is_err());
+        }
     }
 
     #[test]

@@ -268,6 +268,9 @@ fn test_backup_with_missing_files() {
 fn test_package_manager_detection_priority() {
     use std::env;
 
+    env::remove_var("YOOP_PACKAGE_MANAGER");
+    env::remove_var("npm_config_user_agent");
+
     let config = UpdateConfig {
         package_manager: Some(PackageManagerKind::Pnpm),
         ..Default::default()
@@ -281,6 +284,7 @@ fn test_package_manager_detection_priority() {
     }
 
     let config = UpdateConfig::default();
+    env::remove_var("npm_config_user_agent");
     env::set_var("YOOP_PACKAGE_MANAGER", "yarn");
     let result = PackageManager::detect(&config);
     env::remove_var("YOOP_PACKAGE_MANAGER");
@@ -291,6 +295,7 @@ fn test_package_manager_detection_priority() {
         assert!(result.is_err());
     }
 
+    env::remove_var("YOOP_PACKAGE_MANAGER");
     env::set_var("npm_config_user_agent", "bun/1.0.0");
     let result = PackageManager::detect(&config);
     env::remove_var("npm_config_user_agent");
