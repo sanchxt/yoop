@@ -64,6 +64,7 @@ pub mod receive;
 pub mod scan;
 pub mod send;
 pub mod share;
+pub mod sync;
 pub mod trust;
 #[cfg(feature = "update")]
 pub mod update;
@@ -94,6 +95,9 @@ pub enum Command {
 
     /// Share and sync clipboard content
     Clipboard(ClipboardArgs),
+
+    /// Synchronize a directory with another device
+    Sync(sync::SyncArgs),
 
     /// Scan network for active shares
     Scan(ScanArgs),

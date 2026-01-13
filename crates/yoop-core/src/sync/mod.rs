@@ -203,7 +203,7 @@ impl SyncOp {
 }
 
 /// Statistics from a sync session.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct SyncStats {
     /// Total session duration
     pub duration: std::time::Duration,

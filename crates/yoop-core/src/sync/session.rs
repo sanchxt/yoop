@@ -7,16 +7,19 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use rustls::pki_types::ServerName;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
-use tokio_rustls::{TlsAcceptor, TlsConnector};
+use tokio::sync::{broadcast, mpsc, Mutex};
+use tokio::task::JoinHandle;
+use tokio_rustls::{TlsAcceptor, TlsConnector, TlsStream};
 
 use super::conflict::ResolutionStrategy;
 use super::engine::{SyncEngine, SyncPlan};
 use super::index::{FileEntry, FileIndex};
+use super::watcher::{FileEvent, FileEventKind, FileWatcher};
 use super::{FileKind, RelativePath, SyncConfig, SyncOp, SyncStats};
 use crate::code::{CodeGenerator, ShareCode};
 use crate::crypto::{self, TlsConfig};
@@ -32,7 +35,7 @@ use crate::transfer::TransferConfig;
 use crate::{Error, Result, DEFAULT_CHUNK_SIZE, PROTOCOL_VERSION};
 
 /// Events emitted during sync for UI updates.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub enum SyncEvent {
     /// Connected to peer
     Connected {
@@ -109,6 +112,8 @@ pub struct SyncSession {
     stats: SyncStats,
     sync_engine: SyncEngine,
     op_id_counter: u64,
+    tls_stream: Option<TlsStream<TcpStream>>,
+    session_start: Instant,
 }
 
 impl std::fmt::Debug for SyncSession {
@@ -196,6 +201,8 @@ impl SyncSession {
                 stats: SyncStats::new(),
                 sync_engine: SyncEngine::new(ResolutionStrategy::default()),
                 op_id_counter: 0,
+                tls_stream: Some(tokio_rustls::TlsStream::Server(tls_stream)),
+                session_start: Instant::now(),
             },
         ))
     }
@@ -265,6 +272,8 @@ impl SyncSession {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: Some(tokio_rustls::TlsStream::Client(tls_stream)),
+            session_start: Instant::now(),
         })
     }
 
@@ -958,6 +967,622 @@ impl SyncSession {
 
         Ok(())
     }
+
+    /// Run the live sync session with continuous bidirectional synchronization.
+    ///
+    /// This method starts the live sync loop which monitors local file changes
+    /// and synchronizes them with the peer in real-time. It runs until:
+    /// - The user presses Ctrl+C
+    /// - A fatal error occurs
+    /// - The connection is lost and reconnection fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the sync session cannot be started or a fatal error occurs.
+    pub async fn run<F>(&mut self, mut event_callback: F) -> Result<SyncStats>
+    where
+        F: FnMut(SyncEvent) + Send + 'static,
+    {
+        let start_time = Instant::now();
+
+        self.run_initial_sync(&mut event_callback).await?;
+
+        let tls_stream = self
+            .tls_stream
+            .take()
+            .ok_or_else(|| Error::Internal("TLS stream not available".to_string()))?;
+
+        let stream = Arc::new(Mutex::new(tls_stream));
+
+        let (outbound_tx, outbound_rx) = mpsc::channel::<SyncOp>(100);
+        let (shutdown_tx, _) = broadcast::channel::<()>(10);
+
+        let mut watcher = FileWatcher::new(self.config.clone())?;
+        watcher.start()?;
+
+        let watcher_handle = Self::spawn_watcher_task(
+            watcher,
+            outbound_tx.clone(),
+            shutdown_tx.subscribe(),
+            Arc::new(Mutex::new(self.local_index.clone())),
+        );
+
+        let outbound_handle = Self::spawn_outbound_task(
+            Arc::clone(&stream),
+            outbound_rx,
+            shutdown_tx.subscribe(),
+            Arc::new(Mutex::new(self.stats.clone())),
+            Arc::new(Mutex::new(self.op_id_counter)),
+            self.config.clone(),
+        );
+
+        let inbound_handle = Self::spawn_inbound_task(
+            Arc::clone(&stream),
+            shutdown_tx.subscribe(),
+            Arc::new(Mutex::new(self.stats.clone())),
+            Arc::new(Mutex::new(self.local_index.clone())),
+            self.config.clone(),
+            event_callback,
+        );
+
+        let keepalive_handle =
+            Self::spawn_keepalive_task(Arc::clone(&stream), shutdown_tx.subscribe());
+
+        tokio::select! {
+            result = watcher_handle => {
+                tracing::info!("Watcher task completed: {:?}", result);
+            }
+            result = outbound_handle => {
+                tracing::info!("Outbound task completed: {:?}", result);
+            }
+            result = inbound_handle => {
+                tracing::info!("Inbound task completed: {:?}", result);
+            }
+            result = keepalive_handle => {
+                tracing::info!("Keepalive task completed: {:?}", result);
+            }
+            _ = tokio::signal::ctrl_c() => {
+                tracing::info!("Ctrl+C received, shutting down");
+            }
+        }
+
+        let _ = shutdown_tx.send(());
+
+        self.stats.duration = start_time.elapsed();
+        Ok(self.stats.clone())
+    }
+
+    /// Spawn the file watcher task.
+    fn spawn_watcher_task(
+        mut watcher: FileWatcher,
+        outbound_tx: mpsc::Sender<SyncOp>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+        local_index: Arc<Mutex<FileIndex>>,
+    ) -> JoinHandle<Result<()>> {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    event_opt = watcher.next_event() => {
+                        if let Some(event) = event_opt {
+                            if let Some(op) = Self::event_to_sync_op(&event, &local_index).await? {
+                                if let Err(e) = outbound_tx.send(op).await {
+                                    tracing::error!("Failed to queue outbound operation: {}", e);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::debug!("Watcher task received shutdown signal");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Spawn the outbound task to send operations to the peer.
+    fn spawn_outbound_task(
+        stream: Arc<Mutex<TlsStream<TcpStream>>>,
+        mut outbound_rx: mpsc::Receiver<SyncOp>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+        stats: Arc<Mutex<SyncStats>>,
+        op_id_counter: Arc<Mutex<u64>>,
+        config: SyncConfig,
+    ) -> JoinHandle<Result<()>> {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    op_opt = outbound_rx.recv() => {
+                        if let Some(op) = op_opt {
+                            let mut counter = op_id_counter.lock().await;
+                            let op_id = *counter;
+                            *counter += 1;
+                            drop(counter);
+
+                            let mut stream_guard = stream.lock().await;
+                            if let Err(e) = Self::send_sync_op(&mut *stream_guard, &op, op_id, &config).await {
+                                tracing::error!("Failed to send sync operation: {}", e);
+                                break;
+                            }
+                            drop(stream_guard);
+
+                            let mut stats_guard = stats.lock().await;
+                            match &op {
+                                SyncOp::Create { size, .. } | SyncOp::Modify { size, .. } => {
+                                    stats_guard.files_sent += 1;
+                                    stats_guard.bytes_sent += size;
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::debug!("Outbound task received shutdown signal");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Spawn the inbound task to receive operations from the peer.
+    fn spawn_inbound_task<F>(
+        stream: Arc<Mutex<TlsStream<TcpStream>>>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+        stats: Arc<Mutex<SyncStats>>,
+        _local_index: Arc<Mutex<FileIndex>>,
+        config: SyncConfig,
+        mut event_callback: F,
+    ) -> JoinHandle<Result<()>>
+    where
+        F: FnMut(SyncEvent) + Send + 'static,
+    {
+        tokio::spawn(async move {
+            loop {
+                tokio::select! {
+                    frame_result = async {
+                        let mut stream_guard = stream.lock().await;
+                        read_frame(&mut *stream_guard).await
+                    } => {
+                        match frame_result {
+                            Ok((header, payload)) => {
+                                match header.message_type {
+                                    MessageType::SyncOp => {
+                                        let op_payload: SyncOpPayload = decode_payload(&payload)?;
+                                        let mut stream_guard = stream.lock().await;
+                                        if let Err(e) = Self::receive_sync_op(
+                                            &mut *stream_guard,
+                                            op_payload,
+                                            &config,
+                                            &stats,
+                                            &mut event_callback,
+                                        )
+                                        .await
+                                        {
+                                            tracing::error!("Failed to receive sync operation: {}", e);
+                                        }
+                                    }
+                                    MessageType::Ping => {
+                                        let mut stream_guard = stream.lock().await;
+                                        write_frame(&mut *stream_guard, MessageType::Pong, &[]).await?;
+                                    }
+                                    _ => {
+                                        tracing::debug!("Received unexpected message type: {:?}", header.message_type);
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                tracing::error!("Error reading frame: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::debug!("Inbound task received shutdown signal");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Spawn the keepalive task to send periodic pings.
+    fn spawn_keepalive_task(
+        stream: Arc<Mutex<TlsStream<TcpStream>>>,
+        mut shutdown_rx: broadcast::Receiver<()>,
+    ) -> JoinHandle<Result<()>> {
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(30));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
+            loop {
+                tokio::select! {
+                    _ = interval.tick() => {
+                        let mut stream_guard = stream.lock().await;
+                        if let Err(e) = write_frame(&mut *stream_guard, MessageType::Ping, &[]).await {
+                            tracing::error!("Failed to send ping: {}", e);
+                            break;
+                        }
+                        tracing::debug!("Sent keepalive ping");
+                    }
+                    _ = shutdown_rx.recv() => {
+                        tracing::debug!("Keepalive task received shutdown signal");
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        })
+    }
+
+    /// Convert a file event to a sync operation.
+    async fn event_to_sync_op(
+        event: &FileEvent,
+        local_index: &Arc<Mutex<FileIndex>>,
+    ) -> Result<Option<SyncOp>> {
+        match event.kind {
+            FileEventKind::Created => {
+                let metadata = tokio::fs::metadata(event.path.to_path(&std::path::PathBuf::new())).await?;
+                let kind = if metadata.is_dir() {
+                    FileKind::Directory
+                } else if metadata.is_file() {
+                    FileKind::File
+                } else {
+                    FileKind::Symlink
+                };
+
+                let (size, hash) = if kind == FileKind::File {
+                    let data = tokio::fs::read(event.path.to_path(&std::path::PathBuf::new())).await?;
+                    (data.len() as u64, crate::crypto::xxhash64(&data))
+                } else {
+                    (0, 0)
+                };
+
+                Ok(Some(SyncOp::Create {
+                    path: event.path.clone(),
+                    kind,
+                    size,
+                    content_hash: hash,
+                }))
+            }
+            FileEventKind::Modified => {
+                let data = tokio::fs::read(event.path.to_path(&std::path::PathBuf::new())).await?;
+                let hash = crate::crypto::xxhash64(&data);
+
+                Ok(Some(SyncOp::Modify {
+                    path: event.path.clone(),
+                    size: data.len() as u64,
+                    content_hash: hash,
+                }))
+            }
+            FileEventKind::Deleted => {
+                let mut index = local_index.lock().await;
+                let entry = index.remove(&event.path);
+                let kind = entry.map(|e| e.kind).unwrap_or(FileKind::File);
+
+                Ok(Some(SyncOp::Delete {
+                    path: event.path.clone(),
+                    kind,
+                }))
+            }
+        }
+    }
+
+    /// Send a sync operation to the peer (simplified for live sync).
+    async fn send_sync_op<S>(
+        stream: &mut S,
+        op: &SyncOp,
+        op_id: u64,
+        config: &SyncConfig,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (op_type, path, from_path, kind, size, content_hash) = match op {
+            SyncOp::Create {
+                path,
+                kind,
+                size,
+                content_hash,
+            } => (
+                SyncOpType::Create,
+                path.as_str().to_string(),
+                None,
+                *kind as u8,
+                Some(*size),
+                Some(*content_hash),
+            ),
+            SyncOp::Modify {
+                path,
+                size,
+                content_hash,
+            } => (
+                SyncOpType::Modify,
+                path.as_str().to_string(),
+                None,
+                FileKind::File as u8,
+                Some(*size),
+                Some(*content_hash),
+            ),
+            SyncOp::Delete { path, kind } => (
+                SyncOpType::Delete,
+                path.as_str().to_string(),
+                None,
+                *kind as u8,
+                None,
+                None,
+            ),
+            SyncOp::Rename { from, to, kind } => (
+                SyncOpType::Rename,
+                to.as_str().to_string(),
+                Some(from.as_str().to_string()),
+                *kind as u8,
+                None,
+                None,
+            ),
+        };
+
+        let chunk_count = if let Some(file_size) = size {
+            if file_size > 0 {
+                Some(((file_size + DEFAULT_CHUNK_SIZE as u64 - 1) / DEFAULT_CHUNK_SIZE as u64) as u32)
+            } else {
+                Some(0)
+            }
+        } else {
+            None
+        };
+
+        let payload = SyncOpPayload {
+            op_id,
+            op_type,
+            path,
+            from_path,
+            kind,
+            size,
+            content_hash,
+            chunk_count,
+        };
+
+        write_frame(stream, MessageType::SyncOp, &encode_payload(&payload)?).await?;
+
+        if let (Some(file_size), true) = (size, matches!(op_type, SyncOpType::Create | SyncOpType::Modify)) {
+            if file_size > 0 {
+                let file_path = match op {
+                    SyncOp::Create { path, .. } | SyncOp::Modify { path, .. } => path.to_path(&config.sync_root),
+                    _ => unreachable!(),
+                };
+
+                Self::send_file_chunks_simple(stream, op_id, &file_path).await?;
+            }
+        }
+
+        let (header, ack_payload) = read_frame(stream).await?;
+        if header.message_type != MessageType::SyncOpAck {
+            return Err(Error::ProtocolError("expected SyncOpAck".to_string()));
+        }
+
+        let ack: SyncOpAckPayload = decode_payload(&ack_payload)?;
+        if !ack.success {
+            return Err(Error::SyncOperationFailed(
+                ack.error.unwrap_or_else(|| "unknown error".to_string()),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Send file chunks (simplified version).
+    async fn send_file_chunks_simple<S>(
+        stream: &mut S,
+        op_id: u64,
+        file_path: &std::path::Path,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let chunker = FileChunker::new(DEFAULT_CHUNK_SIZE);
+        let chunks = chunker.read_chunks(file_path, 0).await?;
+
+        for chunk in chunks {
+            let chunk_payload = SyncChunkPayload {
+                op_id,
+                chunk_index: chunk.chunk_index as u32,
+                data: chunk.data.clone(),
+                checksum: chunk.checksum,
+            };
+
+            write_frame(stream, MessageType::SyncChunk, &encode_sync_chunk(&chunk_payload)).await?;
+
+            let (header, ack_data) = read_frame(stream).await?;
+            if header.message_type != MessageType::SyncChunkAck {
+                return Err(Error::ProtocolError("expected SyncChunkAck".to_string()));
+            }
+
+            let ack: SyncChunkAckPayload = decode_payload(&ack_data)?;
+            if !ack.success {
+                return Err(Error::SyncOperationFailed("chunk transfer failed".to_string()));
+            }
+        }
+
+        let complete = SyncCompletePayload {
+            op_id,
+            content_hash: 0,
+        };
+        write_frame(stream, MessageType::SyncComplete, &encode_payload(&complete)?).await?;
+
+        Ok(())
+    }
+
+    /// Receive a sync operation from the peer (simplified for live sync).
+    async fn receive_sync_op<S, F>(
+        stream: &mut S,
+        payload: SyncOpPayload,
+        config: &SyncConfig,
+        stats: &Arc<Mutex<SyncStats>>,
+        event_callback: &mut F,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+        F: FnMut(SyncEvent),
+    {
+        let op_id = payload.op_id;
+
+        match payload.op_type {
+            SyncOpType::Create | SyncOpType::Modify => {
+                if let Some(size) = payload.size {
+                    let path = RelativePath::new(&payload.path);
+                    let abs_path = path.to_path(&config.sync_root);
+
+                    if let Some(parent) = abs_path.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+
+                    event_callback(SyncEvent::FileReceiving {
+                        path: payload.path.clone(),
+                        size,
+                    });
+
+                    if size > 0 && payload.chunk_count.unwrap_or(0) > 0 {
+                        Self::receive_file_chunks_simple(stream, op_id, &abs_path, size).await?;
+                    } else {
+                        tokio::fs::File::create(&abs_path).await?;
+                    }
+
+                    event_callback(SyncEvent::FileReceived {
+                        path: payload.path.clone(),
+                    });
+
+                    let mut stats_guard = stats.lock().await;
+                    stats_guard.files_received += 1;
+                    stats_guard.bytes_received += size;
+                }
+            }
+            SyncOpType::Delete => {
+                if config.sync_deletions {
+                    let path = RelativePath::new(&payload.path);
+                    let abs_path = path.to_path(&config.sync_root);
+
+                    if abs_path.exists() {
+                        if abs_path.is_dir() {
+                            tokio::fs::remove_dir_all(&abs_path).await?;
+                        } else {
+                            tokio::fs::remove_file(&abs_path).await?;
+                        }
+                    }
+
+                    event_callback(SyncEvent::FileDeleted {
+                        path: payload.path.clone(),
+                    });
+                }
+            }
+            SyncOpType::Rename => {
+                if let Some(from_path_str) = payload.from_path {
+                    let from_path = RelativePath::new(&from_path_str);
+                    let to_path = RelativePath::new(&payload.path);
+                    let from_abs = from_path.to_path(&config.sync_root);
+                    let to_abs = to_path.to_path(&config.sync_root);
+
+                    if let Some(parent) = to_abs.parent() {
+                        tokio::fs::create_dir_all(parent).await?;
+                    }
+
+                    tokio::fs::rename(&from_abs, &to_abs).await?;
+                }
+            }
+        }
+
+        let ack = SyncOpAckPayload {
+            op_id,
+            success: true,
+            error: None,
+            content_hash: None,
+        };
+        write_frame(stream, MessageType::SyncOpAck, &encode_payload(&ack)?).await?;
+
+        Ok(())
+    }
+
+    /// Receive file chunks (simplified version).
+    async fn receive_file_chunks_simple<S>(
+        stream: &mut S,
+        op_id: u64,
+        output_path: &std::path::Path,
+        expected_size: u64,
+    ) -> Result<()>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        use crate::crypto::xxhash64;
+
+        let mut writer = FileWriter::new(output_path.to_path_buf(), expected_size).await?;
+
+        loop {
+            let (header, chunk_data) = read_frame(stream).await?;
+
+            match header.message_type {
+                MessageType::SyncChunk => {
+                    let chunk_payload = decode_sync_chunk(&chunk_data)?;
+
+                    if chunk_payload.op_id != op_id {
+                        return Err(Error::ProtocolError(format!(
+                            "chunk op_id mismatch: expected {}, got {}",
+                            op_id, chunk_payload.op_id
+                        )));
+                    }
+
+                    let computed_checksum = xxhash64(&chunk_payload.data);
+                    if computed_checksum != chunk_payload.checksum {
+                        let ack = SyncChunkAckPayload {
+                            op_id,
+                            chunk_index: chunk_payload.chunk_index,
+                            success: false,
+                        };
+                        write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?).await?;
+                        return Err(Error::ChecksumMismatch {
+                            file: output_path.display().to_string(),
+                            chunk: chunk_payload.chunk_index as u64,
+                        });
+                    }
+
+                    let file_chunk = FileChunk {
+                        file_index: 0,
+                        chunk_index: chunk_payload.chunk_index as u64,
+                        data: chunk_payload.data,
+                        checksum: chunk_payload.checksum,
+                        is_last: false,
+                    };
+
+                    writer.write_chunk(&file_chunk).await?;
+
+                    let ack = SyncChunkAckPayload {
+                        op_id,
+                        chunk_index: chunk_payload.chunk_index,
+                        success: true,
+                    };
+                    write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?).await?;
+                }
+                MessageType::SyncComplete => {
+                    let _complete: SyncCompletePayload = decode_payload(&chunk_data)?;
+                    writer.finalize().await?;
+                    break;
+                }
+                _ => {
+                    return Err(Error::UnexpectedMessage {
+                        expected: "SyncChunk or SyncComplete".to_string(),
+                        actual: format!("{:?}", header.message_type),
+                    });
+                }
+            }
+        }
+
+        Ok(())
+    }
 }
 
 /// Helper to configure TCP keepalive on a socket.
@@ -999,6 +1624,8 @@ mod tests {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: None,
+            session_start: Instant::now(),
         };
 
         let debug_str = format!("{:?}", session);
@@ -1022,6 +1649,8 @@ mod tests {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: None,
+            session_start: Instant::now(),
         };
 
         assert_eq!(session.peer_name(), "TestPeer");
@@ -1044,6 +1673,8 @@ mod tests {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: None,
+            session_start: Instant::now(),
         };
 
         assert_eq!(session.peer_name(), "Unknown");
@@ -1066,6 +1697,8 @@ mod tests {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: None,
+            session_start: Instant::now(),
         };
 
         let stats = session.stats();
@@ -1090,6 +1723,8 @@ mod tests {
             stats: SyncStats::new(),
             sync_engine: SyncEngine::new(ResolutionStrategy::default()),
             op_id_counter: 0,
+            tls_stream: None,
+            session_start: Instant::now(),
         };
 
         assert_eq!(session.next_op_id(), 0);
