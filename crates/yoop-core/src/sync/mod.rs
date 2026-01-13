@@ -31,8 +31,17 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+pub mod conflict;
+pub mod engine;
 pub mod index;
+pub mod session;
 pub mod watcher;
+
+pub use conflict::{
+    Conflict, ConflictDetector, ConflictResolution, ConflictVersion, ResolutionStrategy,
+};
+pub use engine::{SyncEngine, SyncPlan};
+pub use session::{SyncEvent, SyncSession};
 
 /// Configuration for a sync session.
 #[derive(Debug, Clone)]
