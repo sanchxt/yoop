@@ -32,6 +32,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 pub mod index;
+pub mod watcher;
 
 /// Configuration for a sync session.
 #[derive(Debug, Clone)]
