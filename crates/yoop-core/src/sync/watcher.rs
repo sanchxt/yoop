@@ -169,7 +169,7 @@ impl FileWatcher {
             EventKind::Create(_) => FileEventKind::Created,
             EventKind::Modify(_) => FileEventKind::Modified,
             EventKind::Remove(_) => FileEventKind::Deleted,
-            _ => return Ok(()), // Ignore other event types
+            _ => return Ok(()),
         };
 
         for path in &event.paths {
@@ -192,14 +192,12 @@ impl FileWatcher {
 
 /// Check if a file should be processed based on exclusion patterns, size limits, and kind.
 fn should_process_file(config: &SyncConfig, path: &Path, kind: &FileEventKind) -> Result<bool> {
-    // Check exclusion patterns first
     let pattern_matcher = PatternMatcher::new(&config.exclude_patterns)?;
     if pattern_matcher.is_excluded(path) {
         tracing::debug!("Skipping excluded file: {}", path.display());
         return Ok(false);
     }
 
-    // For deletions, no need to check file metadata
     if *kind == FileEventKind::Deleted {
         return Ok(true);
     }
@@ -210,7 +208,6 @@ fn should_process_file(config: &SyncConfig, path: &Path, kind: &FileEventKind) -
 
     let metadata = std::fs::metadata(path)?;
 
-    // Check file size limits
     if metadata.is_file()
         && config.max_file_size > 0
         && metadata.len() > config.max_file_size
@@ -516,7 +513,6 @@ mod tests {
 
         if let Some(event) = watcher.next_event().await {
             assert_eq!(event.path.as_str(), "test.txt");
-            // Platform-specific: some systems emit Modified instead of Created
             assert!(
                 event.kind == FileEventKind::Created || event.kind == FileEventKind::Modified
             );

@@ -61,6 +61,19 @@ yoop clipboard receive A7K9
 yoop clipboard sync
 ```
 
+### Directory Sync
+
+```bash
+# Host a sync session
+yoop sync ~/Projects/shared-folder
+
+# Join a sync session
+yoop sync A7K9 ~/Projects/shared-folder
+
+# With exclusion patterns
+yoop sync ./folder --exclude "*.log" --exclude "dist/"
+```
+
 ## Features
 
 - **Cross-platform**: Windows, Linux, and macOS
@@ -69,6 +82,7 @@ yoop clipboard sync
 - **Private & secure**: TLS 1.3 encryption, data never leaves local network
 - **Fast transfers**: Chunked transfers with verification
 - **Resume capability**: Interrupted transfers resume automatically
+- **Directory sync**: Real-time bidirectional folder synchronization
 - **Web interface**: Browser-based UI for devices without CLI
 
 ## CLI Commands
@@ -78,7 +92,9 @@ yoop share <files...>           # Share files/folders
 yoop receive <code>             # Receive with code
 yoop clipboard share            # Share clipboard
 yoop clipboard receive <code>   # Receive clipboard
-yoop clipboard sync [code]      # Bidirectional sync
+yoop clipboard sync [code]      # Bidirectional clipboard sync
+yoop sync <directory>           # Host a directory sync session
+yoop sync <code> <directory>    # Join a directory sync session
 yoop scan                       # Scan for active shares
 yoop web                        # Start web interface
 yoop diagnose                   # Network diagnostics

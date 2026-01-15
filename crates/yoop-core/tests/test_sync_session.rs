@@ -1,6 +1,5 @@
 //! Integration tests for sync session lifecycle.
 
-use std::path::PathBuf;
 use tempfile::TempDir;
 use tokio::fs;
 use yoop_core::sync::{SyncConfig, SyncSession};
@@ -19,7 +18,7 @@ async fn test_sync_session_index_exchange() {
         ..Default::default()
     };
 
-    let client_config = SyncConfig {
+    let _client_config = SyncConfig {
         sync_root: client_dir.path().to_path_buf(),
         ..Default::default()
     };

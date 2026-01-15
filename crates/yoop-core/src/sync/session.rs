@@ -105,6 +105,7 @@ pub enum SyncEvent {
 /// A bidirectional sync session.
 pub struct SyncSession {
     config: SyncConfig,
+    #[allow(dead_code)]
     transfer_config: TransferConfig,
     local_index: FileIndex,
     remote_index: FileIndex,
@@ -113,6 +114,7 @@ pub struct SyncSession {
     sync_engine: SyncEngine,
     op_id_counter: u64,
     tls_stream: Option<TlsStream<TcpStream>>,
+    #[allow(dead_code)]
     session_start: Instant,
 }
 
@@ -468,6 +470,7 @@ impl SyncSession {
     }
 
     /// Get next operation ID.
+    #[allow(dead_code)]
     fn next_op_id(&mut self) -> u64 {
         let id = self.op_id_counter;
         self.op_id_counter += 1;
@@ -643,6 +646,7 @@ impl SyncSession {
     }
 
     /// Send a file operation to the peer.
+    #[allow(dead_code)]
     async fn send_file_op<S>(
         &mut self,
         stream: &mut S,
@@ -750,6 +754,7 @@ impl SyncSession {
     }
 
     /// Send file chunks for a file operation.
+    #[allow(dead_code)]
     async fn send_file_chunks<S>(
         &mut self,
         stream: &mut S,
@@ -802,6 +807,7 @@ impl SyncSession {
     }
 
     /// Receive a file operation from the peer.
+    #[allow(dead_code)]
     async fn receive_file_op<S, F>(
         &mut self,
         stream: &mut S,
@@ -890,6 +896,7 @@ impl SyncSession {
     }
 
     /// Receive file chunks for a file operation.
+    #[allow(dead_code)]
     async fn receive_file_chunks<S>(
         &mut self,
         stream: &mut S,
