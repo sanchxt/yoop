@@ -1120,7 +1120,7 @@ mod tests {
         let payload = SyncInitPayload {
             sync_root_name: "test-folder".to_string(),
             file_count: 42,
-            total_size: 1024000,
+            total_size: 1_024_000,
             index_hash: 0x1234_5678_9ABC_DEF0,
             protocol_version: 1,
             capabilities: SyncCapabilities::default(),
@@ -1152,7 +1152,7 @@ mod tests {
             path: "foo/bar.txt".to_string(),
             kind: 0,
             size: 1024,
-            mtime: 1234567890,
+            mtime: 1_234_567_890,
             content_hash: 0xABCD_EF12_3456_7890,
         };
 
@@ -1288,7 +1288,7 @@ mod tests {
         let payload = SyncStatusPayload {
             state: "syncing".to_string(),
             files_synced: 42,
-            bytes_transferred: 1024000,
+            bytes_transferred: 1_024_000,
             message: Some("All good".to_string()),
         };
 

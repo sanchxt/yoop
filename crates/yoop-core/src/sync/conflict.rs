@@ -121,12 +121,13 @@ impl ConflictResolution {
             .unwrap_or_default()
             .as_secs();
 
-        if let Some(dot_idx) = path_str.rfind('.') {
-            let (name, ext) = path_str.split_at(dot_idx);
-            RelativePath::new(format!("{name}.conflict.{timestamp}{ext}"))
-        } else {
-            RelativePath::new(format!("{path_str}.conflict.{timestamp}"))
-        }
+        path_str.rfind('.').map_or_else(
+            || RelativePath::new(format!("{path_str}.conflict.{timestamp}")),
+            |dot_idx| {
+                let (name, ext) = path_str.split_at(dot_idx);
+                RelativePath::new(format!("{name}.conflict.{timestamp}{ext}"))
+            },
+        )
     }
 }
 
@@ -178,7 +179,8 @@ pub fn resolve_last_write_wins(conflict: &Conflict) -> ConflictResolution {
 /// The local file is renamed with a conflict marker, then the remote version is accepted.
 #[must_use]
 pub fn resolve_keep_both(conflict: &Conflict) -> ConflictResolution {
-    let rename_to = ConflictResolution::generate_conflict_name(&conflict.path, conflict.local_mtime);
+    let rename_to =
+        ConflictResolution::generate_conflict_name(&conflict.path, conflict.local_mtime);
     ConflictResolution::RenameThenAcceptRemote { rename_to }
 }
 
@@ -225,7 +227,14 @@ impl ConflictDetector {
             return None;
         }
 
-        let conflict = Conflict::new(path, local_mtime, local_hash, remote_mtime, remote_hash, kind);
+        let conflict = Conflict::new(
+            path,
+            local_mtime,
+            local_hash,
+            remote_mtime,
+            remote_hash,
+            kind,
+        );
 
         if conflict.is_ambiguous(self.ambiguity_window_secs) {
             Some(conflict)
@@ -341,7 +350,7 @@ mod tests {
     #[test]
     fn test_generate_conflict_name_with_extension() {
         let path = RelativePath::new("document.txt");
-        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1234567890);
+        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1_234_567_890);
 
         let conflict_name = ConflictResolution::generate_conflict_name(&path, mtime);
         assert_eq!(conflict_name.as_str(), "document.conflict.1234567890.txt");
@@ -350,7 +359,7 @@ mod tests {
     #[test]
     fn test_generate_conflict_name_without_extension() {
         let path = RelativePath::new("README");
-        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(9876543210);
+        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(9_876_543_210);
 
         let conflict_name = ConflictResolution::generate_conflict_name(&path, mtime);
         assert_eq!(conflict_name.as_str(), "README.conflict.9876543210");
@@ -359,7 +368,7 @@ mod tests {
     #[test]
     fn test_generate_conflict_name_multiple_dots() {
         let path = RelativePath::new("archive.tar.gz");
-        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1111111111);
+        let mtime = SystemTime::UNIX_EPOCH + Duration::from_secs(1_111_111_111);
 
         let conflict_name = ConflictResolution::generate_conflict_name(&path, mtime);
         assert_eq!(conflict_name.as_str(), "archive.tar.conflict.1111111111.gz");
@@ -423,7 +432,9 @@ mod tests {
 
         if let ConflictResolution::RenameThenAcceptRemote { rename_to } = resolution {
             assert!(rename_to.as_str().contains("conflict"));
-            assert!(rename_to.as_str().ends_with(".txt"));
+            assert!(std::path::Path::new(rename_to.as_str())
+                .extension()
+                .is_some_and(|ext| ext.eq_ignore_ascii_case("txt")));
         }
     }
 

@@ -417,7 +417,7 @@ mod tests {
             content_hash: 12345,
         };
 
-        index.insert(entry.clone());
+        index.insert(entry);
         assert_eq!(index.len(), 1);
         assert!(index.get(&RelativePath::new("test.txt")).is_some());
 
@@ -457,7 +457,7 @@ mod tests {
 
         local.insert(entry1);
         remote.insert(entry2);
-        remote.insert(entry3.clone());
+        remote.insert(entry3);
 
         let ops = local.diff(&remote);
 

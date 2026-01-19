@@ -52,17 +52,23 @@ pub struct SyncArgs {
 /// Run the sync command
 pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
     let sync_root = args.directory.canonicalize().map_err(|e| {
-        anyhow::anyhow!("Cannot access directory '{}': {}", args.directory.display(), e)
+        anyhow::anyhow!(
+            "Cannot access directory '{}': {}",
+            args.directory.display(),
+            e
+        )
     })?;
 
     if !sync_root.is_dir() {
         anyhow::bail!("Not a directory: {}", args.directory.display());
     }
 
-    let mut config = SyncConfig::default();
-    config.sync_root = sync_root.clone();
-    config.follow_symlinks = args.follow_symlinks;
-    config.sync_deletions = !args.no_delete;
+    let mut config = SyncConfig {
+        sync_root: sync_root.clone(),
+        follow_symlinks: args.follow_symlinks,
+        sync_deletions: !args.no_delete,
+        ..Default::default()
+    };
 
     for pattern in &args.exclude {
         config.exclude_patterns.push(pattern.clone());
@@ -102,7 +108,10 @@ async fn run_host(
         println!("\nYoop v{}", env!("CARGO_PKG_VERSION"));
         println!("─────────────────────────────────────");
         println!();
-        println!("  Starting sync session for: {}", config.sync_root.display());
+        println!(
+            "  Starting sync session for: {}",
+            config.sync_root.display()
+        );
         println!();
     }
 
@@ -238,8 +247,16 @@ fn print_event(event: &SyncEvent, quiet: bool, json: bool) {
 fn print_stats(stats: &yoop_core::sync::SyncStats) {
     println!("  Session ended. Stats:");
     println!("    Duration: {}s", stats.duration.as_secs());
-    println!("    Sent: {} files ({} bytes)", stats.files_sent, format_size(stats.bytes_sent));
-    println!("    Received: {} files ({} bytes)", stats.files_received, format_size(stats.bytes_received));
+    println!(
+        "    Sent: {} files ({} bytes)",
+        stats.files_sent,
+        format_size(stats.bytes_sent)
+    );
+    println!(
+        "    Received: {} files ({} bytes)",
+        stats.files_received,
+        format_size(stats.bytes_received)
+    );
     if stats.conflicts > 0 {
         println!("    Conflicts: {}", stats.conflicts);
     }
@@ -248,6 +265,7 @@ fn print_stats(stats: &yoop_core::sync::SyncStats) {
     }
 }
 
+#[allow(clippy::cast_precision_loss)]
 fn format_size(bytes: u64) -> String {
     const KB: u64 = 1024;
     const MB: u64 = KB * 1024;
@@ -260,7 +278,7 @@ fn format_size(bytes: u64) -> String {
     } else if bytes >= KB {
         format!("{:.2} KB", bytes as f64 / KB as f64)
     } else {
-        format!("{} B", bytes)
+        format!("{bytes} B")
     }
 }
 

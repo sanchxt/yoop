@@ -62,7 +62,7 @@ pub enum FileEventKind {
 /// }
 /// ```
 pub struct FileWatcher {
-    _watcher: RecommendedWatcher,
+    watcher: RecommendedWatcher,
     event_rx: mpsc::UnboundedReceiver<FileEvent>,
     config: Arc<SyncConfig>,
     debouncer: Debouncer,
@@ -103,7 +103,7 @@ impl FileWatcher {
         let debouncer = Debouncer::new(config.debounce_ms);
 
         Ok(Self {
-            _watcher: watcher,
+            watcher,
             event_rx,
             config,
             debouncer,
@@ -118,7 +118,7 @@ impl FileWatcher {
     ///
     /// Returns an error if the watcher cannot start watching the directory.
     pub fn start(&mut self) -> Result<()> {
-        self._watcher
+        self.watcher
             .watch(&self.config.sync_root, RecursiveMode::Recursive)
             .map_err(|e| crate::Error::WatcherError(e.to_string()))
     }
@@ -129,7 +129,7 @@ impl FileWatcher {
     ///
     /// Returns an error if the watcher cannot stop watching the directory.
     pub fn stop(&mut self) -> Result<()> {
-        self._watcher
+        self.watcher
             .unwatch(&self.config.sync_root)
             .map_err(|e| crate::Error::WatcherError(e.to_string()))
     }
@@ -150,7 +150,7 @@ impl FileWatcher {
                         return self.debouncer.flush_all().into_iter().next();
                     }
                 }
-                _ = tokio::time::sleep(Duration::from_millis(self.config.debounce_ms)) => {
+                () = tokio::time::sleep(Duration::from_millis(self.config.debounce_ms)) => {
                     if let Some(event) = self.debouncer.flush_next() {
                         return Some(event);
                     }
@@ -208,10 +208,7 @@ fn should_process_file(config: &SyncConfig, path: &Path, kind: &FileEventKind) -
 
     let metadata = std::fs::metadata(path)?;
 
-    if metadata.is_file()
-        && config.max_file_size > 0
-        && metadata.len() > config.max_file_size
-    {
+    if metadata.is_file() && config.max_file_size > 0 && metadata.len() > config.max_file_size {
         tracing::debug!(
             "Skipping file {} (size {} exceeds max {})",
             path.display(),
@@ -276,11 +273,7 @@ impl Debouncer {
     ///
     /// Used when shutting down to ensure no events are lost.
     fn flush_all(&mut self) -> Vec<FileEvent> {
-        let events: Vec<_> = self
-            .pending
-            .drain()
-            .map(|(_, (event, _))| event)
-            .collect();
+        let events: Vec<_> = self.pending.drain().map(|(_, (event, _))| event).collect();
         events
     }
 }
@@ -408,7 +401,7 @@ mod tests {
 
         for i in 0..5 {
             let event = FileEvent {
-                path: RelativePath::new(format!("file{}.txt", i)),
+                path: RelativePath::new(format!("file{i}.txt")),
                 kind: FileEventKind::Created,
                 timestamp: Instant::now(),
             };
@@ -513,9 +506,7 @@ mod tests {
 
         if let Some(event) = watcher.next_event().await {
             assert_eq!(event.path.as_str(), "test.txt");
-            assert!(
-                event.kind == FileEventKind::Created || event.kind == FileEventKind::Modified
-            );
+            assert!(event.kind == FileEventKind::Created || event.kind == FileEventKind::Modified);
         }
     }
 
@@ -548,9 +539,7 @@ mod tests {
 
         if let Some(event) = watcher.next_event().await {
             assert_eq!(event.path.as_str(), "test.txt");
-            assert!(
-                event.kind == FileEventKind::Modified || event.kind == FileEventKind::Created
-            );
+            assert!(event.kind == FileEventKind::Modified || event.kind == FileEventKind::Created);
         }
     }
 

@@ -104,7 +104,7 @@ impl SyncEngine {
         &self,
         conflicts: &[Conflict],
         local_ops: &mut Vec<SyncOp>,
-        _remote_ops: &mut Vec<SyncOp>,
+        _remote_ops: &mut [SyncOp],
     ) -> Vec<ConflictResolution> {
         let mut resolutions = Vec::new();
 
@@ -389,13 +389,11 @@ mod tests {
         let mut local_ops = Vec::new();
         let mut remote_ops = Vec::new();
 
-        let resolutions = engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
+        let resolutions =
+            engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
 
         assert_eq!(resolutions.len(), 1);
-        assert!(matches!(
-            resolutions[0],
-            ConflictResolution::AcceptRemote
-        ));
+        assert!(matches!(resolutions[0], ConflictResolution::AcceptRemote));
         assert_eq!(local_ops.len(), 1);
     }
 
@@ -416,7 +414,8 @@ mod tests {
         let mut local_ops = Vec::new();
         let mut remote_ops = Vec::new();
 
-        let resolutions = engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
+        let resolutions =
+            engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
 
         assert_eq!(resolutions.len(), 1);
         assert!(matches!(resolutions[0], ConflictResolution::KeepLocal));
@@ -440,7 +439,8 @@ mod tests {
         let mut local_ops = Vec::new();
         let mut remote_ops = Vec::new();
 
-        let resolutions = engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
+        let resolutions =
+            engine.apply_conflict_resolutions(&[conflict], &mut local_ops, &mut remote_ops);
 
         assert_eq!(resolutions.len(), 1);
         assert!(matches!(
@@ -522,7 +522,13 @@ mod tests {
         let ordered = plan.into_ordered_ops();
 
         assert_eq!(ordered.len(), 4);
-        assert!(matches!(ordered[0], SyncOp::Create { kind: FileKind::Directory, .. }));
+        assert!(matches!(
+            ordered[0],
+            SyncOp::Create {
+                kind: FileKind::Directory,
+                ..
+            }
+        ));
         assert!(matches!(ordered[1], SyncOp::Rename { .. }));
         assert!(matches!(ordered[2], SyncOp::Modify { .. }));
         assert!(matches!(ordered[3], SyncOp::Delete { .. }));

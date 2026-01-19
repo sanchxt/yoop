@@ -10,8 +10,12 @@ async fn test_sync_session_index_exchange() {
     let host_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
 
-    fs::write(host_dir.path().join("file1.txt"), b"hello").await.unwrap();
-    fs::write(host_dir.path().join("file2.txt"), b"world").await.unwrap();
+    fs::write(host_dir.path().join("file1.txt"), b"hello")
+        .await
+        .unwrap();
+    fs::write(host_dir.path().join("file2.txt"), b"world")
+        .await
+        .unwrap();
 
     let host_config = SyncConfig {
         sync_root: host_dir.path().to_path_buf(),
@@ -26,20 +30,15 @@ async fn test_sync_session_index_exchange() {
     let transfer_config = TransferConfig::default();
 
     let host_task = tokio::spawn(async move {
-        let result = SyncSession::host(host_config, transfer_config).await;
-        result
+        SyncSession::host(host_config, transfer_config).await
     });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-    let code = match tokio::time::timeout(
-        tokio::time::Duration::from_secs(1),
-        host_task,
-    )
-    .await
-    {
-        Ok(Ok(Ok((code, _session)))) => code,
-        _ => panic!("Host setup failed"),
+    let Ok(Ok(Ok((code, _session)))) =
+        tokio::time::timeout(tokio::time::Duration::from_secs(1), host_task).await
+    else {
+        panic!("Host setup failed")
     };
 
     assert_eq!(code.as_str().len(), 4);

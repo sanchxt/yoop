@@ -24,12 +24,12 @@ use super::{FileKind, RelativePath, SyncConfig, SyncOp, SyncStats};
 use crate::code::{CodeGenerator, ShareCode};
 use crate::crypto::{self, TlsConfig};
 use crate::discovery::{DiscoveryPacket, HybridBroadcaster, HybridListener};
-use crate::file::{FileChunker, FileChunk, FileWriter};
+use crate::file::{FileChunk, FileChunker, FileWriter};
 use crate::protocol::{
-    decode_payload, decode_sync_chunk, encode_payload, encode_sync_chunk, read_frame,
-    write_frame, HelloPayload, MessageType, SyncCapabilities, SyncChunkAckPayload,
-    SyncChunkPayload, SyncCompletePayload, SyncIndexEntry, SyncIndexPayload, SyncInitPayload,
-    SyncOpAckPayload, SyncOpPayload, SyncOpType,
+    decode_payload, decode_sync_chunk, encode_payload, encode_sync_chunk, read_frame, write_frame,
+    HelloPayload, MessageType, SyncCapabilities, SyncChunkAckPayload, SyncChunkPayload,
+    SyncCompletePayload, SyncIndexEntry, SyncIndexPayload, SyncInitPayload, SyncOpAckPayload,
+    SyncOpPayload, SyncOpType,
 };
 use crate::transfer::TransferConfig;
 use crate::{Error, Result, DEFAULT_CHUNK_SIZE, PROTOCOL_VERSION};
@@ -155,7 +155,8 @@ impl SyncSession {
             .ok_or_else(|| Error::Internal("server config not available".to_string()))?;
         let acceptor = TlsAcceptor::from(Arc::new(server_config.clone()));
 
-        let listener = TcpListener::bind(format!("0.0.0.0:{}", transfer_config.transfer_port)).await?;
+        let listener =
+            TcpListener::bind(format!("0.0.0.0:{}", transfer_config.transfer_port)).await?;
         let local_addr = listener.local_addr()?;
 
         let device_name = hostname::get().map_or_else(
@@ -188,9 +189,14 @@ impl SyncSession {
 
         broadcaster.stop().await;
 
-        let (peer_name, remote_index) =
-            Self::handshake_host(&mut tls_stream, &device_name, &session_key, &local_index, &config)
-                .await?;
+        let (peer_name, remote_index) = Self::handshake_host(
+            &mut tls_stream,
+            &device_name,
+            &session_key,
+            &local_index,
+            &config,
+        )
+        .await?;
 
         Ok((
             code,
@@ -237,9 +243,13 @@ impl SyncSession {
             .find(&share_code, transfer_config.discovery_timeout)
             .await?;
 
-        let peer_addr: SocketAddr = format!("{}:{}", announcement.source.ip(), announcement.packet.transfer_port)
-            .parse()
-            .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
+        let peer_addr: SocketAddr = format!(
+            "{}:{}",
+            announcement.source.ip(),
+            announcement.packet.transfer_port
+        )
+        .parse()
+        .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
 
         tracing::info!("Found peer at {}", peer_addr);
 
@@ -261,9 +271,14 @@ impl SyncSession {
             |h| h.to_string_lossy().to_string(),
         );
 
-        let (peer_name, remote_index) =
-            Self::handshake_client(&mut tls_stream, &device_name, &session_key, &local_index, &config)
-                .await?;
+        let (peer_name, remote_index) = Self::handshake_client(
+            &mut tls_stream,
+            &device_name,
+            &session_key,
+            &local_index,
+            &config,
+        )
+        .await?;
 
         Ok(Self {
             config,
@@ -409,6 +424,7 @@ impl SyncSession {
                 path: e.path.as_str().to_string(),
                 kind: e.kind as u8,
                 size: e.size,
+                #[allow(clippy::cast_possible_wrap)]
                 mtime: e
                     .mtime
                     .duration_since(SystemTime::UNIX_EPOCH)
@@ -442,12 +458,12 @@ impl SyncSession {
             let file_entry = FileEntry {
                 path: RelativePath::new(entry.path),
                 kind: match entry.kind {
-                    0 => FileKind::File,
                     1 => FileKind::Directory,
                     2 => FileKind::Symlink,
                     _ => FileKind::File,
                 },
                 size: entry.size,
+                #[allow(clippy::cast_sign_loss)]
                 mtime: SystemTime::UNIX_EPOCH + Duration::from_secs(entry.mtime as u64),
                 content_hash: entry.content_hash,
             };
@@ -493,12 +509,15 @@ impl SyncSession {
             remote_files: self.remote_index.len() as u64,
         });
 
-        let (mut local_ops, mut remote_ops, conflicts) =
-            self.sync_engine
-                .reconcile(&self.local_index, &self.remote_index);
+        let (mut local_ops, mut remote_ops, conflicts) = self
+            .sync_engine
+            .reconcile(&self.local_index, &self.remote_index);
 
         if !conflicts.is_empty() {
-            tracing::info!("Detected {} conflicts, applying resolutions", conflicts.len());
+            tracing::info!(
+                "Detected {} conflicts, applying resolutions",
+                conflicts.len()
+            );
             for conflict in &conflicts {
                 event_callback(SyncEvent::Conflict {
                     path: conflict.path.as_str().to_string(),
@@ -506,9 +525,11 @@ impl SyncSession {
                 });
             }
 
-            let resolutions = self
-                .sync_engine
-                .apply_conflict_resolutions(&conflicts, &mut local_ops, &mut remote_ops);
+            let resolutions = self.sync_engine.apply_conflict_resolutions(
+                &conflicts,
+                &mut local_ops,
+                &mut remote_ops,
+            );
 
             self.stats.conflicts += conflicts.len() as u64;
             tracing::debug!("Applied {} conflict resolutions", resolutions.len());
@@ -605,7 +626,10 @@ impl SyncSession {
             }
             SyncOp::Delete { path, kind } => {
                 if !self.config.sync_deletions {
-                    tracing::debug!("Skipping deletion (sync_deletions=false): {}", path.as_str());
+                    tracing::debug!(
+                        "Skipping deletion (sync_deletions=false): {}",
+                        path.as_str()
+                    );
                     return Ok(());
                 }
 
@@ -647,11 +671,7 @@ impl SyncSession {
 
     /// Send a file operation to the peer.
     #[allow(dead_code)]
-    async fn send_file_op<S>(
-        &mut self,
-        stream: &mut S,
-        op: &SyncOp,
-    ) -> Result<()>
+    async fn send_file_op<S>(&mut self, stream: &mut S, op: &SyncOp) -> Result<()>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
@@ -701,16 +721,14 @@ impl SyncSession {
             ),
         };
 
-        let chunk_count = if let Some(file_size) = size {
+        #[allow(clippy::cast_possible_truncation)]
+        let chunk_count = size.map(|file_size| {
             if file_size > 0 {
-                let chunks = (file_size + DEFAULT_CHUNK_SIZE as u64 - 1) / DEFAULT_CHUNK_SIZE as u64;
-                Some(chunks as u32)
+                file_size.div_ceil(DEFAULT_CHUNK_SIZE as u64) as u32
             } else {
-                Some(0)
+                0
             }
-        } else {
-            None
-        };
+        });
 
         let payload = SyncOpPayload {
             op_id,
@@ -725,7 +743,10 @@ impl SyncSession {
 
         write_frame(stream, MessageType::SyncOp, &encode_payload(&payload)?).await?;
 
-        if let (Some(file_size), true) = (size, matches!(op_type, SyncOpType::Create | SyncOpType::Modify)) {
+        if let (Some(file_size), true) = (
+            size,
+            matches!(op_type, SyncOpType::Create | SyncOpType::Modify),
+        ) {
             if file_size > 0 {
                 let file_path = match op {
                     SyncOp::Create { path, .. } | SyncOp::Modify { path, .. } => {
@@ -768,6 +789,7 @@ impl SyncSession {
         let chunks = chunker.read_chunks(file_path, 0).await?;
 
         for chunk in chunks {
+            #[allow(clippy::cast_possible_truncation)]
             let chunk_payload = SyncChunkPayload {
                 op_id,
                 chunk_index: chunk.chunk_index as u32,
@@ -785,7 +807,9 @@ impl SyncSession {
 
             let ack: SyncChunkAckPayload = decode_payload(&ack_data)?;
             if !ack.success {
-                return Err(Error::SyncOperationFailed("chunk transfer failed".to_string()));
+                return Err(Error::SyncOperationFailed(
+                    "chunk transfer failed".to_string(),
+                ));
             }
 
             self.stats.bytes_sent += chunk.data.len() as u64;
@@ -898,7 +922,7 @@ impl SyncSession {
     /// Receive file chunks for a file operation.
     #[allow(dead_code)]
     async fn receive_file_chunks<S>(
-        &mut self,
+        &self,
         stream: &mut S,
         op_id: u64,
         output_path: &std::path::Path,
@@ -936,13 +960,13 @@ impl SyncSession {
                             .await?;
                         return Err(Error::ChecksumMismatch {
                             file: output_path.display().to_string(),
-                            chunk: chunk_payload.chunk_index as u64,
+                            chunk: u64::from(chunk_payload.chunk_index),
                         });
                     }
 
                     let file_chunk = FileChunk {
                         file_index: 0,
-                        chunk_index: chunk_payload.chunk_index as u64,
+                        chunk_index: u64::from(chunk_payload.chunk_index),
                         data: chunk_payload.data,
                         checksum: chunk_payload.checksum,
                         is_last: false,
@@ -955,8 +979,7 @@ impl SyncSession {
                         chunk_index: chunk_payload.chunk_index,
                         success: true,
                     };
-                    write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?)
-                        .await?;
+                    write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?).await?;
                 }
                 MessageType::SyncComplete => {
                     let _complete: SyncCompletePayload = decode_payload(&chunk_data)?;
@@ -1138,11 +1161,12 @@ impl SyncSession {
     }
 
     /// Spawn the inbound task to receive operations from the peer.
+    #[allow(clippy::needless_pass_by_value)]
     fn spawn_inbound_task<F>(
         stream: Arc<Mutex<TlsStream<TcpStream>>>,
         mut shutdown_rx: broadcast::Receiver<()>,
         stats: Arc<Mutex<SyncStats>>,
-        _local_index: Arc<Mutex<FileIndex>>,
+        #[allow(unused_variables)] local_index: Arc<Mutex<FileIndex>>,
         config: SyncConfig,
         mut event_callback: F,
     ) -> JoinHandle<Result<()>>
@@ -1175,8 +1199,7 @@ impl SyncSession {
                                         }
                                     }
                                     MessageType::Ping => {
-                                        let mut stream_guard = stream.lock().await;
-                                        write_frame(&mut *stream_guard, MessageType::Pong, &[]).await?;
+                                        write_frame(&mut *stream.lock().await, MessageType::Pong, &[]).await?;
                                     }
                                     _ => {
                                         tracing::debug!("Received unexpected message type: {:?}", header.message_type);
@@ -1211,8 +1234,7 @@ impl SyncSession {
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
-                        let mut stream_guard = stream.lock().await;
-                        if let Err(e) = write_frame(&mut *stream_guard, MessageType::Ping, &[]).await {
+                        if let Err(e) = write_frame(&mut *stream.lock().await, MessageType::Ping, &[]).await {
                             tracing::error!("Failed to send ping: {}", e);
                             break;
                         }
@@ -1235,7 +1257,8 @@ impl SyncSession {
     ) -> Result<Option<SyncOp>> {
         match event.kind {
             FileEventKind::Created => {
-                let metadata = tokio::fs::metadata(event.path.to_path(&std::path::PathBuf::new())).await?;
+                let metadata =
+                    tokio::fs::metadata(event.path.to_path(&std::path::PathBuf::new())).await?;
                 let kind = if metadata.is_dir() {
                     FileKind::Directory
                 } else if metadata.is_file() {
@@ -1245,7 +1268,8 @@ impl SyncSession {
                 };
 
                 let (size, hash) = if kind == FileKind::File {
-                    let data = tokio::fs::read(event.path.to_path(&std::path::PathBuf::new())).await?;
+                    let data =
+                        tokio::fs::read(event.path.to_path(&std::path::PathBuf::new())).await?;
                     (data.len() as u64, crate::crypto::xxhash64(&data))
                 } else {
                     (0, 0)
@@ -1269,9 +1293,8 @@ impl SyncSession {
                 }))
             }
             FileEventKind::Deleted => {
-                let mut index = local_index.lock().await;
-                let entry = index.remove(&event.path);
-                let kind = entry.map(|e| e.kind).unwrap_or(FileKind::File);
+                let entry = local_index.lock().await.remove(&event.path);
+                let kind = entry.map_or(FileKind::File, |e| e.kind);
 
                 Ok(Some(SyncOp::Delete {
                     path: event.path.clone(),
@@ -1335,15 +1358,14 @@ impl SyncSession {
             ),
         };
 
-        let chunk_count = if let Some(file_size) = size {
+        #[allow(clippy::cast_possible_truncation)]
+        let chunk_count = size.map(|file_size| {
             if file_size > 0 {
-                Some(((file_size + DEFAULT_CHUNK_SIZE as u64 - 1) / DEFAULT_CHUNK_SIZE as u64) as u32)
+                file_size.div_ceil(DEFAULT_CHUNK_SIZE as u64) as u32
             } else {
-                Some(0)
+                0
             }
-        } else {
-            None
-        };
+        });
 
         let payload = SyncOpPayload {
             op_id,
@@ -1358,10 +1380,15 @@ impl SyncSession {
 
         write_frame(stream, MessageType::SyncOp, &encode_payload(&payload)?).await?;
 
-        if let (Some(file_size), true) = (size, matches!(op_type, SyncOpType::Create | SyncOpType::Modify)) {
+        if let (Some(file_size), true) = (
+            size,
+            matches!(op_type, SyncOpType::Create | SyncOpType::Modify),
+        ) {
             if file_size > 0 {
                 let file_path = match op {
-                    SyncOp::Create { path, .. } | SyncOp::Modify { path, .. } => path.to_path(&config.sync_root),
+                    SyncOp::Create { path, .. } | SyncOp::Modify { path, .. } => {
+                        path.to_path(&config.sync_root)
+                    }
                     _ => unreachable!(),
                 };
 
@@ -1397,6 +1424,7 @@ impl SyncSession {
         let chunks = chunker.read_chunks(file_path, 0).await?;
 
         for chunk in chunks {
+            #[allow(clippy::cast_possible_truncation)]
             let chunk_payload = SyncChunkPayload {
                 op_id,
                 chunk_index: chunk.chunk_index as u32,
@@ -1404,7 +1432,12 @@ impl SyncSession {
                 checksum: chunk.checksum,
             };
 
-            write_frame(stream, MessageType::SyncChunk, &encode_sync_chunk(&chunk_payload)).await?;
+            write_frame(
+                stream,
+                MessageType::SyncChunk,
+                &encode_sync_chunk(&chunk_payload),
+            )
+            .await?;
 
             let (header, ack_data) = read_frame(stream).await?;
             if header.message_type != MessageType::SyncChunkAck {
@@ -1413,7 +1446,9 @@ impl SyncSession {
 
             let ack: SyncChunkAckPayload = decode_payload(&ack_data)?;
             if !ack.success {
-                return Err(Error::SyncOperationFailed("chunk transfer failed".to_string()));
+                return Err(Error::SyncOperationFailed(
+                    "chunk transfer failed".to_string(),
+                ));
             }
         }
 
@@ -1421,7 +1456,12 @@ impl SyncSession {
             op_id,
             content_hash: 0,
         };
-        write_frame(stream, MessageType::SyncComplete, &encode_payload(&complete)?).await?;
+        write_frame(
+            stream,
+            MessageType::SyncComplete,
+            &encode_payload(&complete)?,
+        )
+        .await?;
 
         Ok(())
     }
@@ -1550,16 +1590,17 @@ impl SyncSession {
                             chunk_index: chunk_payload.chunk_index,
                             success: false,
                         };
-                        write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?).await?;
+                        write_frame(stream, MessageType::SyncChunkAck, &encode_payload(&ack)?)
+                            .await?;
                         return Err(Error::ChecksumMismatch {
                             file: output_path.display().to_string(),
-                            chunk: chunk_payload.chunk_index as u64,
+                            chunk: u64::from(chunk_payload.chunk_index),
                         });
                     }
 
                     let file_chunk = FileChunk {
                         file_index: 0,
-                        chunk_index: chunk_payload.chunk_index as u64,
+                        chunk_index: u64::from(chunk_payload.chunk_index),
                         data: chunk_payload.data,
                         checksum: chunk_payload.checksum,
                         is_last: false,
@@ -1635,7 +1676,7 @@ mod tests {
             session_start: Instant::now(),
         };
 
-        let debug_str = format!("{:?}", session);
+        let debug_str = format!("{session:?}");
         assert!(debug_str.contains("SyncSession"));
     }
 
@@ -1744,7 +1785,7 @@ mod tests {
         let event = SyncEvent::Connected {
             peer_name: "TestPeer".to_string(),
         };
-        let debug_str = format!("{:?}", event);
+        let debug_str = format!("{event:?}");
         assert!(debug_str.contains("Connected"));
         assert!(debug_str.contains("TestPeer"));
     }
