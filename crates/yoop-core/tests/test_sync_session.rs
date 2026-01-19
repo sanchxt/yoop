@@ -29,9 +29,8 @@ async fn test_sync_session_index_exchange() {
 
     let transfer_config = TransferConfig::default();
 
-    let host_task = tokio::spawn(async move {
-        SyncSession::host(host_config, transfer_config).await
-    });
+    let host_task =
+        tokio::spawn(async move { SyncSession::host(host_config, transfer_config).await });
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
