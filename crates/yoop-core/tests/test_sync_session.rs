@@ -6,6 +6,7 @@ use yoop_core::sync::{SyncConfig, SyncSession};
 use yoop_core::transfer::TransferConfig;
 
 #[tokio::test]
+#[ignore = "Requires UDP broadcast which doesn't work in CI"]
 async fn test_sync_session_index_exchange() {
     let host_dir = TempDir::new().unwrap();
     let client_dir = TempDir::new().unwrap();
@@ -52,6 +53,7 @@ async fn test_sync_config_default() {
 }
 
 #[tokio::test]
+#[ignore = "Requires network connection which blocks indefinitely in CI"]
 async fn test_sync_session_debug() {
     let temp_dir = TempDir::new().unwrap();
     let config = SyncConfig {
