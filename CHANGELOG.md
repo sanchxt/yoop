@@ -5,6 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.5](https://github.com/sanchxt/yoop/compare/v0.1.4...v0.1.5) (2026-01-21)
+
+
+### Features
+
+* **sync:** implement live bidirectional directory synchronization ([c966b7c](https://github.com/sanchxt/yoop/commit/c966b7cf0078140d9a9a9ea8ecb65509bd69799e))
+
 ## [0.1.4](https://github.com/sanchxt/yoop/compare/v0.1.3...v0.1.4) (2026-01-12)
 
 
