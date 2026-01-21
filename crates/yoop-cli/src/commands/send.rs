@@ -35,11 +35,20 @@ pub async fn run(args: SendArgs) -> Result<()> {
 
     let identity = DeviceIdentity::load_or_generate().context("Failed to load device identity")?;
 
-    let compress =
-        args.compress || matches!(global_config.transfer.compression, CompressionMode::Always);
+    let compression = if args.no_compress {
+        CompressionMode::Never
+    } else if args.compress {
+        CompressionMode::Always
+    } else {
+        global_config.transfer.compression
+    };
+    let compression_level = args
+        .compression_level
+        .unwrap_or(global_config.transfer.compression_level);
 
     let config = TransferConfig {
-        compress,
+        compression,
+        compression_level,
         chunk_size: global_config.transfer.chunk_size,
         parallel_streams: global_config.transfer.parallel_chunks,
         verify_checksums: global_config.transfer.verify_checksum,

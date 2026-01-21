@@ -231,6 +231,9 @@ pub struct HelloPayload {
     /// Base64-encoded Ed25519 public key (optional, for trust feature)
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub public_key: Option<String>,
+    /// Compression capabilities (optional, for compression negotiation)
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub compression: Option<crate::compression::CompressionCapabilities>,
 }
 
 /// Code verification payload.
@@ -287,10 +290,14 @@ pub struct ChunkDataPayload {
     pub file_index: usize,
     /// Chunk index
     pub chunk_index: u64,
-    /// Chunk data
+    /// Chunk data (may be compressed)
     pub data: Vec<u8>,
-    /// xxHash64 checksum
+    /// xxHash64 checksum (of the wire data, compressed if applicable)
     pub checksum: u64,
+    /// Compression algorithm used (None = uncompressed)
+    pub compression: crate::compression::CompressionAlgorithm,
+    /// Original uncompressed size (only set if compressed)
+    pub original_size: Option<u32>,
 }
 
 /// Chunk acknowledgment payload.
@@ -745,14 +752,30 @@ where
 
 /// Encode a ChunkData payload (binary format).
 ///
-/// Format: file_index (4 bytes) | chunk_index (8 bytes) | checksum (8 bytes) | data
+/// Format (uncompressed):
+///   file_index (4 bytes) | chunk_index (8 bytes) | checksum (8 bytes) | algo (1 byte) | data
+///
+/// Format (compressed, algo != 0):
+///   file_index (4 bytes) | chunk_index (8 bytes) | checksum (8 bytes) | algo (1 byte) | original_size (4 bytes) | data
 #[must_use]
 #[allow(clippy::cast_possible_truncation)]
 pub fn encode_chunk_data(payload: &ChunkDataPayload) -> Vec<u8> {
-    let mut buf = Vec::with_capacity(20 + payload.data.len());
+    use crate::compression::CompressionAlgorithm;
+
+    let is_compressed = payload.compression != CompressionAlgorithm::None;
+    let header_size = if is_compressed { 25 } else { 21 };
+    let mut buf = Vec::with_capacity(header_size + payload.data.len());
+
     buf.extend_from_slice(&(payload.file_index as u32).to_be_bytes());
     buf.extend_from_slice(&payload.chunk_index.to_be_bytes());
     buf.extend_from_slice(&payload.checksum.to_be_bytes());
+    buf.push(payload.compression.as_byte());
+
+    if is_compressed {
+        let original_size = payload.original_size.unwrap_or(0);
+        buf.extend_from_slice(&original_size.to_be_bytes());
+    }
+
     buf.extend_from_slice(&payload.data);
     buf
 }
@@ -761,9 +784,12 @@ pub fn encode_chunk_data(payload: &ChunkDataPayload) -> Vec<u8> {
 ///
 /// # Errors
 ///
-/// Returns an error if the payload is too short.
+/// Returns an error if the payload is too short or has an invalid compression algorithm.
 pub fn decode_chunk_data(data: &[u8]) -> Result<ChunkDataPayload> {
-    if data.len() < 20 {
+    use crate::compression::CompressionAlgorithm;
+
+    // Minimum size: 4 + 8 + 8 + 1 = 21 bytes (uncompressed)
+    if data.len() < 21 {
         return Err(Error::ProtocolError(
             "chunk data payload too short".to_string(),
         ));
@@ -776,13 +802,31 @@ pub fn decode_chunk_data(data: &[u8]) -> Result<ChunkDataPayload> {
     let checksum = u64::from_be_bytes([
         data[12], data[13], data[14], data[15], data[16], data[17], data[18], data[19],
     ]);
-    let chunk_data = data[20..].to_vec();
+
+    let compression = CompressionAlgorithm::from_byte(data[20]).ok_or_else(|| {
+        Error::ProtocolError(format!("unknown compression algorithm: {}", data[20]))
+    })?;
+
+    let (original_size, chunk_data) = if compression == CompressionAlgorithm::None {
+        (None, data[21..].to_vec())
+    } else {
+        // Compressed: need at least 25 bytes header
+        if data.len() < 25 {
+            return Err(Error::ProtocolError(
+                "compressed chunk data payload too short".to_string(),
+            ));
+        }
+        let orig_size = u32::from_be_bytes([data[21], data[22], data[23], data[24]]);
+        (Some(orig_size), data[25..].to_vec())
+    };
 
     Ok(ChunkDataPayload {
         file_index,
         chunk_index,
         data: chunk_data,
         checksum,
+        compression,
+        original_size,
     })
 }
 
@@ -850,12 +894,16 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_data_encode_decode() {
+    fn test_chunk_data_encode_decode_uncompressed() {
+        use crate::compression::CompressionAlgorithm;
+
         let payload = ChunkDataPayload {
             file_index: 5,
             chunk_index: 42,
             data: vec![1, 2, 3, 4, 5],
             checksum: 0x1234_5678_9ABC_DEF0,
+            compression: CompressionAlgorithm::None,
+            original_size: None,
         };
 
         let encoded = encode_chunk_data(&payload);
@@ -865,6 +913,32 @@ mod tests {
         assert_eq!(decoded.chunk_index, payload.chunk_index);
         assert_eq!(decoded.data, payload.data);
         assert_eq!(decoded.checksum, payload.checksum);
+        assert_eq!(decoded.compression, CompressionAlgorithm::None);
+        assert!(decoded.original_size.is_none());
+    }
+
+    #[test]
+    fn test_chunk_data_encode_decode_compressed() {
+        use crate::compression::CompressionAlgorithm;
+
+        let payload = ChunkDataPayload {
+            file_index: 3,
+            chunk_index: 10,
+            data: vec![0xAA, 0xBB, 0xCC], // compressed data
+            checksum: 0xFEDC_BA98_7654_3210,
+            compression: CompressionAlgorithm::Zstd,
+            original_size: Some(1024), // original uncompressed size
+        };
+
+        let encoded = encode_chunk_data(&payload);
+        let decoded = decode_chunk_data(&encoded).expect("decode");
+
+        assert_eq!(decoded.file_index, payload.file_index);
+        assert_eq!(decoded.chunk_index, payload.chunk_index);
+        assert_eq!(decoded.data, payload.data);
+        assert_eq!(decoded.checksum, payload.checksum);
+        assert_eq!(decoded.compression, CompressionAlgorithm::Zstd);
+        assert_eq!(decoded.original_size, Some(1024));
     }
 
     #[tokio::test]

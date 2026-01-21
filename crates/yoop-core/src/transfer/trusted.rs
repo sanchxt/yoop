@@ -420,6 +420,8 @@ impl TrustedSendSession {
                     chunk_index: chunk.chunk_index,
                     data: chunk.data.clone(),
                     checksum: chunk.checksum,
+                    compression: crate::compression::CompressionAlgorithm::None,
+                    original_size: None,
                 };
                 let data_payload = protocol::encode_chunk_data(&data);
                 protocol::write_frame(stream, MessageType::ChunkData, &data_payload).await?;

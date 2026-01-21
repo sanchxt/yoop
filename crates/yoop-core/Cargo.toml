@@ -59,6 +59,9 @@ qrcode = { workspace = true }
 notify = "6"
 globset = "0.4"
 
+# Compression
+zstd = { workspace = true }
+
 # Error handling
 thiserror = { workspace = true }
 

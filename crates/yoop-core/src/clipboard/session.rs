@@ -186,6 +186,7 @@ impl ClipboardShareSession {
             protocol_version: "1.0".to_string(),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         let payload = protocol::encode_payload(&hello)?;
         protocol::write_frame(stream, MessageType::Hello, &payload).await?;
@@ -702,6 +703,7 @@ impl ClipboardReceiveSession {
             protocol_version: "1.0".to_string(),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
@@ -831,6 +833,7 @@ impl SyncHostSession {
             protocol_version: "1.0".to_string(),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         let payload = protocol::encode_payload(&hello)?;
         protocol::write_frame(&mut tls_stream, MessageType::Hello, &payload).await?;
@@ -1009,6 +1012,7 @@ impl ClipboardSyncSession {
             protocol_version: "1.0".to_string(),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;

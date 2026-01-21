@@ -14,6 +14,7 @@
 //!
 //! - [`clipboard`] - Clipboard sharing (one-shot and live sync)
 //! - [`code`] - Share code generation and validation
+//! - [`compression`] - Transfer compression using zstd
 //! - [`config`] - Configuration management
 //! - [`crypto`] - Cryptographic primitives (TLS, hashing, signatures)
 //! - [`discovery`] - Network discovery via UDP broadcast and mDNS
@@ -56,6 +57,7 @@
 
 pub mod clipboard;
 pub mod code;
+pub mod compression;
 pub mod config;
 pub mod crypto;
 pub mod discovery;

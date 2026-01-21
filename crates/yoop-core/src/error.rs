@@ -249,6 +249,10 @@ pub enum Error {
     /// Sync operation failed
     #[error("sync operation failed: {0}")]
     SyncOperationFailed(String),
+
+    /// Compression/decompression error
+    #[error("compression error: {0}")]
+    Compression(String),
 }
 
 impl Error {

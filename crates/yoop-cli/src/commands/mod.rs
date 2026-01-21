@@ -157,8 +157,16 @@ pub struct ShareArgs {
     pub name: Option<String>,
 
     /// Enable compression for transfer
-    #[arg(long)]
+    #[arg(long, conflicts_with = "no_compress")]
     pub compress: bool,
+
+    /// Disable compression entirely
+    #[arg(long, conflicts_with = "compress")]
+    pub no_compress: bool,
+
+    /// Compression level (1-3, default: 1)
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+    pub compression_level: Option<u8>,
 
     /// Minimal output
     #[arg(short, long)]
@@ -219,8 +227,16 @@ pub struct SendArgs {
     pub paths: Vec<PathBuf>,
 
     /// Enable compression
-    #[arg(long)]
+    #[arg(long, conflicts_with = "no_compress")]
     pub compress: bool,
+
+    /// Disable compression entirely
+    #[arg(long, conflicts_with = "compress")]
+    pub no_compress: bool,
+
+    /// Compression level (1-3, default: 1)
+    #[arg(long, value_parser = clap::value_parser!(u8).range(1..=3))]
+    pub compression_level: Option<u8>,
 
     /// Minimal output
     #[arg(short, long)]
