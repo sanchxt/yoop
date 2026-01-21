@@ -23,6 +23,7 @@ Yoop enables seamless peer-to-peer file transfers over local networks using simp
 -   **CLI + Web interface**: Full-featured command-line tool and browser-based UI
 -   **Trusted devices**: Ed25519 signature-based authentication for direct transfers
 -   **Clipboard sharing**: One-shot transfer and live bidirectional sync
+-   **Directory sync**: Real-time bidirectional directory synchronization
 -   **Shell completions**: Bash, Zsh, Fish, PowerShell, Elvish support
 
 ## Quick Start
@@ -66,6 +67,24 @@ yoop clipboard sync A7K9           # Join sync session
 ```
 
 Supports text and images. Changes sync automatically across devices!
+
+### Directory Sync
+
+```bash
+# Host a sync session
+yoop sync ~/Projects/shared-folder
+
+# Join a sync session from another device
+yoop sync A7K9 ~/Projects/shared-folder
+
+# With exclusion patterns
+yoop sync ./folder --exclude "*.log" --exclude "dist/"
+
+# Use a .gitignore-style file
+yoop sync ./folder --ignore-file .syncignore
+```
+
+Any file changes (additions, modifications, deletions) sync instantly between devices!
 
 ## Installation
 
@@ -146,6 +165,10 @@ yoop clipboard share               # Share clipboard content
 yoop clipboard receive <code>      # Receive clipboard content
 yoop clipboard sync [code]         # Bidirectional clipboard sync
 
+# Directory Sync
+yoop sync <directory>              # Host a sync session
+yoop sync <code> <directory>       # Join a sync session
+
 # Device & Network Management
 yoop trust list                    # Manage trusted devices
 yoop scan                          # Scan for active shares
@@ -198,6 +221,42 @@ yoop trust remove "Name"           # Remove device
 ```
 
 **Security:** Uses Ed25519 signatures for authentication. No MITM attacks possible.
+
+## Directory Sync
+
+Keep directories synchronized across devices in real-time:
+
+```bash
+# Host a sync session (generates code)
+yoop sync ~/Projects/shared-folder
+# → Shows code like A7K9, waits for peer
+
+# Join from another device
+yoop sync A7K9 ~/Projects/shared-folder
+
+# Advanced options
+yoop sync ./folder --exclude "*.log"         # Exclude patterns
+yoop sync ./folder --exclude "node_modules/" # Exclude directories
+yoop sync ./folder --ignore-file .syncignore # Use ignore file
+yoop sync ./folder --no-delete               # Don't sync deletions
+yoop sync ./folder --max-size 100MB          # Limit file size
+```
+
+**Features:**
+
+-   **Bidirectional**: Changes sync both ways automatically
+-   **Real-time**: File changes propagate within 1-2 seconds
+-   **Conflict resolution**: Last-write-wins with notifications
+-   **Pattern exclusions**: Gitignore-style pattern matching
+-   **All file types**: Files, directories, and optionally symlinks
+
+**Output modes:**
+
+```bash
+yoop sync ./folder --quiet    # Minimal output
+yoop sync ./folder --verbose  # Detailed logging
+yoop sync ./folder --json     # JSON output for scripting
+```
 
 ## Configuration
 

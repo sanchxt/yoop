@@ -65,6 +65,7 @@ pub mod history;
 pub mod preview;
 pub mod protocol;
 pub mod qr;
+pub mod sync;
 pub mod transfer;
 pub mod trust;
 

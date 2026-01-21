@@ -55,6 +55,10 @@ arboard = { workspace = true }
 # QR code
 qrcode = { workspace = true }
 
+# File system watching
+notify = "6"
+globset = "0.4"
+
 # Error handling
 thiserror = { workspace = true }
 
