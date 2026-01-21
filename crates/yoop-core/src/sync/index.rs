@@ -428,22 +428,29 @@ mod tests {
 
     #[test]
     fn test_file_index_diff() {
+        use std::time::Duration;
+
         let mut local = FileIndex::default();
         let mut remote = FileIndex::default();
+
+        // Create local entry with an older mtime
+        let local_time = SystemTime::now() - Duration::from_secs(10);
+        let remote_time = SystemTime::now();
 
         let entry1 = FileEntry {
             path: RelativePath::new("both.txt"),
             kind: FileKind::File,
             size: 100,
-            mtime: SystemTime::now(),
+            mtime: local_time,
             content_hash: 12345,
         };
 
+        // Remote entry has newer mtime and different content
         let entry2 = FileEntry {
             path: RelativePath::new("both.txt"),
             kind: FileKind::File,
             size: 100,
-            mtime: SystemTime::now(),
+            mtime: remote_time,
             content_hash: 67890,
         };
 
@@ -451,7 +458,7 @@ mod tests {
             path: RelativePath::new("remote_only.txt"),
             kind: FileKind::File,
             size: 50,
-            mtime: SystemTime::now(),
+            mtime: remote_time,
             content_hash: 11111,
         };
 
@@ -466,7 +473,8 @@ mod tests {
         let has_modify = ops.iter().any(|op| matches!(op, SyncOp::Modify { .. }));
         let has_create = ops.iter().any(|op| matches!(op, SyncOp::Create { .. }));
 
-        assert!(has_modify || has_create);
+        assert!(has_modify);
+        assert!(has_create);
     }
 
     #[test]
