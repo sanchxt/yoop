@@ -788,7 +788,6 @@ pub fn encode_chunk_data(payload: &ChunkDataPayload) -> Vec<u8> {
 pub fn decode_chunk_data(data: &[u8]) -> Result<ChunkDataPayload> {
     use crate::compression::CompressionAlgorithm;
 
-    // Minimum size: 4 + 8 + 8 + 1 = 21 bytes (uncompressed)
     if data.len() < 21 {
         return Err(Error::ProtocolError(
             "chunk data payload too short".to_string(),
@@ -810,7 +809,6 @@ pub fn decode_chunk_data(data: &[u8]) -> Result<ChunkDataPayload> {
     let (original_size, chunk_data) = if compression == CompressionAlgorithm::None {
         (None, data[21..].to_vec())
     } else {
-        // Compressed: need at least 25 bytes header
         if data.len() < 25 {
             return Err(Error::ProtocolError(
                 "compressed chunk data payload too short".to_string(),
@@ -924,10 +922,10 @@ mod tests {
         let payload = ChunkDataPayload {
             file_index: 3,
             chunk_index: 10,
-            data: vec![0xAA, 0xBB, 0xCC], // compressed data
+            data: vec![0xAA, 0xBB, 0xCC],
             checksum: 0xFEDC_BA98_7654_3210,
             compression: CompressionAlgorithm::Zstd,
-            original_size: Some(1024), // original uncompressed size
+            original_size: Some(1024),
         };
 
         let encoded = encode_chunk_data(&payload);

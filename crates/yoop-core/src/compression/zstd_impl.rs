@@ -53,12 +53,10 @@ pub fn decompress(data: &[u8]) -> Result<Vec<u8>> {
 /// `true` if compression would be beneficial, `false` otherwise.
 #[must_use]
 pub fn should_compress(data: &[u8], threshold: f64) -> bool {
-    // Don't bother compressing tiny chunks
     if data.len() < 1024 {
         return false;
     }
 
-    // Quick compression test at level 1 (fastest)
     let Ok(compressed) = compress(data, 1) else {
         return false;
     };
@@ -108,15 +106,14 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::cast_possible_truncation)]
     fn test_should_compress_random() {
-        // Pseudo-random data (deterministic for testing)
         let mut data = Vec::with_capacity(10000);
         let mut state: u64 = 12345;
         for _ in 0..10000 {
-            state = state.wrapping_mul(1103515245).wrapping_add(12345);
+            state = state.wrapping_mul(1_103_515_245).wrapping_add(12345);
             data.push((state >> 16) as u8);
         }
-        // Random data typically doesn't compress well below 95%
         assert!(!should_compress(&data, 0.90));
     }
 
@@ -134,11 +131,9 @@ mod tests {
         let level1 = compress(&data, 1).unwrap();
         let level3 = compress(&data, 3).unwrap();
 
-        // Both should decompress correctly
         assert_eq!(decompress(&level1).unwrap(), data.as_slice());
         assert_eq!(decompress(&level3).unwrap(), data.as_slice());
 
-        // Higher level might compress better (or same)
-        assert!(level3.len() <= level1.len() + 10); // Allow some variance
+        assert!(level3.len() <= level1.len() + 10);
     }
 }

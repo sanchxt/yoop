@@ -158,7 +158,6 @@ mod tests {
         stats.original_bytes = 1000;
         stats.compressed_bytes = 995;
 
-        // Less than 1% savings
         assert!(stats.savings_display().is_empty());
     }
 
@@ -202,7 +201,6 @@ mod tests {
         stats.add_uncompressed(500);
         stats.add_uncompressed(500);
 
-        // 2 out of 4 chunks compressed = 50%
         assert!((stats.compression_percentage() - 50.0).abs() < 0.001);
     }
 

@@ -405,7 +405,7 @@ impl ShareSession {
         self.receiver_name = Some(receiver_name);
         self.receiver_device_id = receiver_device_id;
         self.receiver_public_key = receiver_public_key;
-        // TODO: Use receiver_compression for compression negotiation
+        // TODO: use receiver_compression for compression negotiation
 
         self.do_code_verification(&mut tls_stream).await?;
 

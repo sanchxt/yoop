@@ -433,7 +433,6 @@ mod tests {
         let mut local = FileIndex::default();
         let mut remote = FileIndex::default();
 
-        // Create local entry with an older mtime
         let local_time = SystemTime::now() - Duration::from_secs(10);
         let remote_time = SystemTime::now();
 
@@ -445,7 +444,6 @@ mod tests {
             content_hash: 12345,
         };
 
-        // Remote entry has newer mtime and different content
         let entry2 = FileEntry {
             path: RelativePath::new("both.txt"),
             kind: FileKind::File,

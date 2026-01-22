@@ -165,7 +165,6 @@ impl CompressionCapabilities {
     /// Returns the agreed algorithm (or None if no common support).
     #[must_use]
     pub fn negotiate(&self, other: &Self) -> Option<CompressionAlgorithm> {
-        // Prefer zstd if both support it
         if self.supports(CompressionAlgorithm::Zstd) && other.supports(CompressionAlgorithm::Zstd) {
             return Some(CompressionAlgorithm::Zstd);
         }

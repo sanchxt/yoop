@@ -11,7 +11,7 @@ use super::CompressionMode;
 ///
 /// These are already compressed or don't benefit from compression.
 pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
-    // Images (already compressed)
+    // images
     "jpg",
     "jpeg",
     "png",
@@ -24,7 +24,7 @@ pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
     "bmp",
     "tiff",
     "tif",
-    // Video (already compressed)
+    // videos
     "mp4",
     "mkv",
     "webm",
@@ -36,7 +36,7 @@ pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
     "mpeg",
     "mpg",
     "3gp",
-    // Audio (already compressed)
+    // audios
     "mp3",
     "aac",
     "ogg",
@@ -46,7 +46,7 @@ pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
     "wma",
     "wav",
     "aiff",
-    // Archives (already compressed)
+    // archives
     "zip",
     "gz",
     "bz2",
@@ -62,7 +62,7 @@ pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
     "tgz",
     "tbz2",
     "txz",
-    // Documents (already compressed internally)
+    // docs
     "pdf",
     "docx",
     "xlsx",
@@ -71,14 +71,14 @@ pub const INCOMPRESSIBLE_EXTENSIONS: &[&str] = &[
     "odt",
     "ods",
     "odp",
-    // Fonts (already compressed)
+    // fonts
     "woff",
     "woff2",
     "eot",
-    // Game/3D assets (usually compressed)
+    // game/3d assets
     "unity3d",
     "unitypackage",
-    // Disk images (usually compressed internally)
+    // disk images
     "dmg",
     "iso",
 ];
