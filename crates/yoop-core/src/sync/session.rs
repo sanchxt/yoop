@@ -321,6 +321,7 @@ impl SyncSession {
             protocol_version: format!("{}.{}", PROTOCOL_VERSION.0, PROTOCOL_VERSION.1),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         write_frame(stream, MessageType::HelloAck, &encode_payload(&hello_ack)?).await?;
 
@@ -367,6 +368,7 @@ impl SyncSession {
             protocol_version: format!("{}.{}", PROTOCOL_VERSION.0, PROTOCOL_VERSION.1),
             device_id: None,
             public_key: None,
+            compression: None,
         };
         write_frame(stream, MessageType::Hello, &encode_payload(&hello)?).await?;
 

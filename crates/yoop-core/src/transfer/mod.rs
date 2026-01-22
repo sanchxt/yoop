@@ -168,8 +168,10 @@ pub struct TransferConfig {
     pub parallel_streams: usize,
     /// Bandwidth limit (bytes per second)
     pub bandwidth_limit: Option<u64>,
-    /// Enable compression
-    pub compress: bool,
+    /// Compression mode (auto, always, never)
+    pub compression: crate::compression::CompressionMode,
+    /// Compression level (1-3, lower = faster)
+    pub compression_level: u8,
     /// Verify checksums
     pub verify_checksums: bool,
     /// Discovery port
@@ -188,7 +190,8 @@ impl Default for TransferConfig {
             chunk_size: crate::DEFAULT_CHUNK_SIZE,
             parallel_streams: crate::DEFAULT_PARALLEL_CHUNKS,
             bandwidth_limit: None,
-            compress: false,
+            compression: crate::compression::CompressionMode::Auto,
+            compression_level: 1,
             verify_checksums: true,
             discovery_port: DEFAULT_DISCOVERY_PORT,
             transfer_port: DEFAULT_TRANSFER_PORT,
@@ -397,11 +400,12 @@ impl ShareSession {
 
         self.update_state(TransferState::Connected);
 
-        let (receiver_name, receiver_device_id, receiver_public_key) =
+        let (receiver_name, receiver_device_id, receiver_public_key, _receiver_compression) =
             self.do_handshake(&mut tls_stream).await?;
         self.receiver_name = Some(receiver_name);
         self.receiver_device_id = receiver_device_id;
         self.receiver_public_key = receiver_public_key;
+        // TODO: use receiver_compression for compression negotiation
 
         self.do_code_verification(&mut tls_stream).await?;
 
@@ -434,10 +438,27 @@ impl ShareSession {
         let _ = self.progress_tx.send(progress);
     }
 
+    fn compression_capabilities(&self) -> Option<crate::compression::CompressionCapabilities> {
+        match self.config.compression {
+            crate::compression::CompressionMode::Never => None,
+            crate::compression::CompressionMode::Auto
+            | crate::compression::CompressionMode::Always => {
+                Some(crate::compression::CompressionCapabilities::with_zstd(
+                    self.config.compression_level,
+                ))
+            }
+        }
+    }
+
     async fn do_handshake<S>(
         &self,
         stream: &mut S,
-    ) -> Result<(String, Option<Uuid>, Option<String>)>
+    ) -> Result<(
+        String,
+        Option<Uuid>,
+        Option<String>,
+        Option<crate::compression::CompressionCapabilities>,
+    )>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
@@ -446,6 +467,7 @@ impl ShareSession {
             protocol_version: "1.0".to_string(),
             device_id: Some(self.identity.device_id()),
             public_key: Some(self.identity.public_key_base64()),
+            compression: self.compression_capabilities(),
         };
         let payload = protocol::encode_payload(&hello)?;
         protocol::write_frame(stream, MessageType::Hello, &payload).await?;
@@ -459,7 +481,12 @@ impl ShareSession {
         }
 
         let ack: HelloPayload = protocol::decode_payload(&ack_payload)?;
-        Ok((ack.device_name, ack.device_id, ack.public_key))
+        Ok((
+            ack.device_name,
+            ack.device_id,
+            ack.public_key,
+            ack.compression,
+        ))
     }
 
     async fn do_code_verification<S>(&self, stream: &mut S) -> Result<()>
@@ -633,6 +660,8 @@ impl ShareSession {
                     chunk_index: chunk.chunk_index,
                     data: chunk.data.clone(),
                     checksum: chunk.checksum,
+                    compression: crate::compression::CompressionAlgorithm::None,
+                    original_size: None,
                 };
                 let data_payload = protocol::encode_chunk_data(&data);
                 protocol::write_frame(stream, MessageType::ChunkData, &data_payload).await?;
@@ -824,7 +853,8 @@ impl ReceiveSession {
 
         let session_key = crypto::derive_session_key(code.as_str());
 
-        let (sender_device_id, sender_public_key) = Self::do_handshake(&mut tls_stream).await?;
+        let (sender_device_id, sender_public_key, _sender_compression) =
+            Self::do_handshake(&mut tls_stream).await?;
 
         Self::do_code_verification(&mut tls_stream, code, &session_key).await?;
 
@@ -1136,7 +1166,8 @@ impl ReceiveSession {
 
         let session_key = crypto::derive_session_key(code.as_str());
 
-        let (sender_device_id, sender_public_key) = Self::do_handshake(&mut tls_stream).await?;
+        let (sender_device_id, sender_public_key, _sender_compression) =
+            Self::do_handshake(&mut tls_stream).await?;
         Self::do_code_verification(&mut tls_stream, &code, &session_key).await?;
 
         let files = Self::receive_file_list(&mut tls_stream).await?;
@@ -1386,8 +1417,14 @@ impl ReceiveSession {
         let _ = self.progress_tx.send(progress);
     }
 
-    /// Returns (sender_device_id, sender_public_key) from the Hello message.
-    async fn do_handshake<S>(stream: &mut S) -> Result<(Option<Uuid>, Option<String>)>
+    /// Returns (sender_device_id, sender_public_key, sender_compression_caps) from the Hello message.
+    async fn do_handshake<S>(
+        stream: &mut S,
+    ) -> Result<(
+        Option<Uuid>,
+        Option<String>,
+        Option<crate::compression::CompressionCapabilities>,
+    )>
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
@@ -1411,11 +1448,12 @@ impl ReceiveSession {
             protocol_version: "1.0".to_string(),
             device_id: Some(identity.device_id()),
             public_key: Some(identity.public_key_base64()),
+            compression: Some(crate::compression::CompressionCapabilities::with_zstd(1)),
         };
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
 
-        Ok((hello.device_id, hello.public_key))
+        Ok((hello.device_id, hello.public_key, hello.compression))
     }
 
     async fn do_code_verification<S>(

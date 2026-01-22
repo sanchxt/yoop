@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::Result;
 
+pub use crate::compression::CompressionMode;
+
 /// Main configuration struct for Yoop.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -133,8 +135,10 @@ pub struct TransferConfig {
     pub parallel_chunks: usize,
     /// Bandwidth limit (bytes per second, None for unlimited)
     pub bandwidth_limit: Option<u64>,
-    /// Enable compression
+    /// Compression mode (auto, always, never)
     pub compression: CompressionMode,
+    /// Compression level (1-3, lower = faster)
+    pub compression_level: u8,
     /// Verify checksums after transfer
     pub verify_checksum: bool,
 }
@@ -146,22 +150,10 @@ impl Default for TransferConfig {
             parallel_chunks: crate::DEFAULT_PARALLEL_CHUNKS,
             bandwidth_limit: None,
             compression: CompressionMode::Auto,
+            compression_level: 1,
             verify_checksum: true,
         }
     }
-}
-
-/// Compression mode for transfers.
-#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum CompressionMode {
-    /// Automatically compress compressible files
-    #[default]
-    Auto,
-    /// Always compress
-    Always,
-    /// Never compress
-    Never,
 }
 
 /// Security configuration options.
