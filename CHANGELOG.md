@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.6](https://github.com/sanchxt/yoop/compare/v0.1.5...v0.1.6) (2026-01-23)
+
+
+### Features
+
+* **transfer:** add zstd compression support ([45b62a8](https://github.com/sanchxt/yoop/commit/45b62a8bb4c59d8f8811312e4601ee577027df5c))
+
+
+### Bug Fixes
+
+* **update:** detect package manager from installed yoop location ([#21](https://github.com/sanchxt/yoop/issues/21)) ([1a6121e](https://github.com/sanchxt/yoop/commit/1a6121e8f04bf16ac7915f47efefd0108ed2d7d8))
+
 ## [0.1.5](https://github.com/sanchxt/yoop/compare/v0.1.4...v0.1.5) (2026-01-21)
 
 
