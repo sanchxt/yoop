@@ -46,6 +46,10 @@ impl PackageManager {
             return Ok(pm);
         }
 
+        if let Some(pm) = Self::detect_from_installed() {
+            return Ok(pm);
+        }
+
         Self::detect_from_availability()
     }
 
@@ -88,6 +92,33 @@ impl PackageManager {
         Err(Error::Internal(
             "no package manager found in PATH (npm, pnpm, yarn, or bun)".to_string(),
         ))
+    }
+
+    /// Check which package manager has yoop installed globally.
+    fn detect_from_installed() -> Option<Self> {
+        [Self::Npm, Self::Pnpm, Self::Yarn, Self::Bun]
+            .into_iter()
+            .find(|pm| pm.is_available() && pm.has_yoop_installed())
+    }
+
+    /// Check if this package manager has yoop installed globally.
+    fn has_yoop_installed(self) -> bool {
+        let output = match self {
+            Self::Npm => Command::new("npm")
+                .args(["list", "-g", "yoop", "--depth=0"])
+                .output(),
+            Self::Pnpm => Command::new("pnpm")
+                .args(["list", "-g", "yoop", "--depth=0"])
+                .output(),
+            Self::Yarn => Command::new("yarn")
+                .args(["global", "list", "--pattern", "yoop"])
+                .output(),
+            Self::Bun => Command::new("bun").args(["pm", "ls", "-g"]).output(),
+        };
+
+        output.is_ok_and(|o| {
+            o.status.success() && String::from_utf8_lossy(&o.stdout).contains("yoop")
+        })
     }
 
     /// Check if this package manager is available in PATH.
@@ -286,5 +317,48 @@ mod tests {
         assert_eq!(PackageManager::Npm, PackageManager::Npm);
         assert_ne!(PackageManager::Npm, PackageManager::Pnpm);
         assert_ne!(PackageManager::Yarn, PackageManager::Bun);
+    }
+
+    #[test]
+    fn test_has_yoop_installed_returns_bool() {
+        for pm in [
+            PackageManager::Npm,
+            PackageManager::Pnpm,
+            PackageManager::Yarn,
+            PackageManager::Bun,
+        ] {
+            if pm.is_available() {
+                let _: bool = pm.has_yoop_installed();
+            }
+        }
+    }
+
+    #[test]
+    fn test_detect_from_installed_returns_option() {
+        let result = PackageManager::detect_from_installed();
+        if let Some(pm) = result {
+            assert!(pm.has_yoop_installed());
+        }
+    }
+
+    #[test]
+    fn test_detect_prioritizes_installed_pm() {
+        use std::env;
+
+        env::remove_var("npm_config_user_agent");
+        env::remove_var("YOOP_PACKAGE_MANAGER");
+
+        let config = UpdateConfig::default();
+
+        let installed_pm = PackageManager::detect_from_installed();
+
+        let result = PackageManager::detect(&config);
+
+        if let (Some(expected), Ok(actual)) = (installed_pm, result) {
+            assert_eq!(
+                expected, actual,
+                "detect() should return the PM that has yoop installed"
+            );
+        }
     }
 }

@@ -55,8 +55,7 @@ pub async fn run(args: UpdateArgs) -> Result<()> {
         println!();
     }
 
-    if args.package_manager.is_some() {
-        let pm_str = args.package_manager.as_ref().unwrap();
+    if let Some(pm_str) = &args.package_manager {
         let pm_kind = match pm_str.to_lowercase().as_str() {
             "npm" => yoop_core::config::PackageManagerKind::Npm,
             "pnpm" => yoop_core::config::PackageManagerKind::Pnpm,
