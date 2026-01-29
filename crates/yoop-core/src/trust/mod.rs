@@ -507,25 +507,16 @@ mod tests {
 
         let mut store = TrustStore::load_from(trust_path).unwrap();
 
-        let device1 = TrustedDevice::new(
-            Uuid::new_v4(),
-            "Device 1".to_string(),
-            "key1".to_string(),
-        )
-        .with_address("192.168.1.1".parse().unwrap(), 52530);
+        let device1 =
+            TrustedDevice::new(Uuid::new_v4(), "Device 1".to_string(), "key1".to_string())
+                .with_address("192.168.1.1".parse().unwrap(), 52530);
 
-        let device2 = TrustedDevice::new(
-            Uuid::new_v4(),
-            "Device 2".to_string(),
-            "key2".to_string(),
-        );
+        let device2 =
+            TrustedDevice::new(Uuid::new_v4(), "Device 2".to_string(), "key2".to_string());
 
-        let device3 = TrustedDevice::new(
-            Uuid::new_v4(),
-            "Device 3".to_string(),
-            "key3".to_string(),
-        )
-        .with_address("192.168.1.3".parse().unwrap(), 52540);
+        let device3 =
+            TrustedDevice::new(Uuid::new_v4(), "Device 3".to_string(), "key3".to_string())
+                .with_address("192.168.1.3".parse().unwrap(), 52540);
 
         store.add(device1).unwrap();
         store.add(device2).unwrap();

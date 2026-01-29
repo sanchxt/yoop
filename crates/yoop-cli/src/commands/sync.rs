@@ -118,9 +118,12 @@ fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<Option<(String, Option
             .find_by_name(device_name)
             .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
 
-        let addr = device
-            .address()
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
+        let addr = device.address().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Device '{}' has no stored address. Connect with code first to save the address.",
+                device_name
+            )
+        })?;
 
         anyhow::bail!(
             "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\

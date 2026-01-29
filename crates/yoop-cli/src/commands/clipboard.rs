@@ -159,27 +159,22 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
-    let mut session = match ClipboardReceiveSession::connect_with_options(
-        &code_str,
-        direct_addr,
-        config,
-    )
-    .await
-    {
-        Ok(s) => s,
-        Err(e) => {
-            if json {
-                let output = serde_json::json!({
-                    "status": "error",
-                    "error": format!("{}", e),
-                });
-                println!("{}", serde_json::to_string_pretty(&output)?);
-            } else if !quiet {
-                eprintln!("  Error: {}", e);
+    let mut session =
+        match ClipboardReceiveSession::connect_with_options(&code_str, direct_addr, config).await {
+            Ok(s) => s,
+            Err(e) => {
+                if json {
+                    let output = serde_json::json!({
+                        "status": "error",
+                        "error": format!("{}", e),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else if !quiet {
+                    eprintln!("  Error: {}", e);
+                }
+                bail!("{}", e);
             }
-            bail!("{}", e);
-        }
-    };
+        };
 
     let (sender_addr, sender_name) = session.sender();
     let metadata = session.metadata();
@@ -348,7 +343,10 @@ async fn run_receive_trusted(
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else if !quiet {
-        println!("  Connected to: {} ({}) [trusted]", sender_name, sender_addr);
+        println!(
+            "  Connected to: {} ({}) [trusted]",
+            sender_name, sender_addr
+        );
         println!("  Content: {}", preview);
         println!();
     }
@@ -442,22 +440,27 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
             println!();
         }
 
-        let (session, runner) =
-            match ClipboardSyncSession::connect_with_options(&code_str, direct_addr, config).await {
-                Ok(s) => s,
-                Err(e) => {
-                    if json {
-                        let output = serde_json::json!({
-                            "status": "error",
-                            "error": format!("{}", e),
-                        });
-                        println!("{}", serde_json::to_string_pretty(&output)?);
-                    } else if !quiet {
-                        eprintln!("  Error: {}", e);
-                    }
-                    bail!("{}", e);
+        let (session, runner) = match ClipboardSyncSession::connect_with_options(
+            &code_str,
+            direct_addr,
+            config,
+        )
+        .await
+        {
+            Ok(s) => s,
+            Err(e) => {
+                if json {
+                    let output = serde_json::json!({
+                        "status": "error",
+                        "error": format!("{}", e),
+                    });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else if !quiet {
+                    eprintln!("  Error: {}", e);
                 }
-            };
+                bail!("{}", e);
+            }
+        };
 
         run_sync_session(session, runner, quiet, json).await
     } else {
@@ -546,7 +549,10 @@ async fn run_sync_trusted(
     };
 
     if !quiet && !json {
-        println!("  Connected to trusted device '{}' [trusted]", session.peer_name());
+        println!(
+            "  Connected to trusted device '{}' [trusted]",
+            session.peer_name()
+        );
         println!();
     }
 

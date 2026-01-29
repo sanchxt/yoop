@@ -490,10 +490,7 @@ impl ClipboardReceiveSession {
     /// # Errors
     ///
     /// Returns an error if connection fails or trust verification fails.
-    pub async fn connect_trusted(
-        device: &TrustedDevice,
-        _config: TransferConfig,
-    ) -> Result<Self> {
+    pub async fn connect_trusted(device: &TrustedDevice, _config: TransferConfig) -> Result<Self> {
         let (ip, port) = device.address().ok_or_else(|| {
             Error::ConfigError(format!(
                 "Device '{}' has no stored address. Connect with --host first.",
@@ -523,8 +520,7 @@ impl ClipboardReceiveSession {
             .await
             .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
 
-        let sender_name =
-            Self::do_trusted_handshake(&mut tls_stream, device).await?;
+        let sender_name = Self::do_trusted_handshake(&mut tls_stream, device).await?;
         let metadata = Self::receive_metadata(&mut tls_stream, &sender_name).await?;
 
         Ok(Self {
@@ -924,9 +920,9 @@ impl ClipboardReceiveSession {
                     .decode(&hello.nonce_signature)
                     .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
 
-                let sig_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-                    Error::ProtocolError("Invalid signature length".to_string())
-                })?;
+                let sig_array: [u8; 64] = signature_bytes
+                    .try_into()
+                    .map_err(|_| Error::ProtocolError("Invalid signature length".to_string()))?;
 
                 if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
                     return Err(Error::TrustError("Invalid signature".to_string()));
@@ -1131,7 +1127,8 @@ impl SyncHostSession {
 
                 if !ack.trusted {
                     return Err(Error::TrustError(
-                        ack.error.unwrap_or_else(|| "Peer rejected trust".to_string()),
+                        ack.error
+                            .unwrap_or_else(|| "Peer rejected trust".to_string()),
                     ));
                 }
 
@@ -1142,9 +1139,8 @@ impl SyncHostSession {
                     Error::TrustError("Missing public_key in TrustedHelloAck".to_string())
                 })?;
 
-                let is_trusted_peer = trust_store.is_some_and(|store| {
-                    store.verify_key(&peer_device_id, peer_public_key)
-                });
+                let is_trusted_peer = trust_store
+                    .is_some_and(|store| store.verify_key(&peer_device_id, peer_public_key));
 
                 if let Some(sig_b64) = &ack.nonce_signature {
                     let sig_bytes = BASE64_STANDARD
@@ -1418,9 +1414,9 @@ impl ClipboardSyncSession {
                     .decode(&hello.nonce_signature)
                     .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
 
-                let sig_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
-                    Error::ProtocolError("Invalid signature length".to_string())
-                })?;
+                let sig_array: [u8; 64] = signature_bytes
+                    .try_into()
+                    .map_err(|_| Error::ProtocolError("Invalid signature length".to_string()))?;
 
                 if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
                     return Err(Error::TrustError("Invalid signature".to_string()));
