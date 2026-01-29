@@ -1,6 +1,7 @@
 //! Receive command implementation.
 
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -233,6 +234,15 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 None,
             );
 
+            if let Some(device_id) = sender_device_id {
+                if let Ok(mut store) = TrustStore::load() {
+                    if store.find_by_id(&device_id).is_some() {
+                        let _ =
+                            store.update_address(&device_id, sender_addr.ip(), sender_addr.port());
+                    }
+                }
+            }
+
             if !args.quiet && !args.json {
                 println!();
                 println!("  Transfer complete!");
@@ -245,6 +255,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                         &sender_name,
                         sender_device_id,
                         sender_public_key.as_deref(),
+                        sender_addr,
                     )
                     .await;
                 }
@@ -439,6 +450,7 @@ async fn prompt_trust_device(
     sender_name: &str,
     sender_device_id: Option<Uuid>,
     sender_public_key: Option<&str>,
+    sender_addr: SocketAddr,
 ) {
     let (Some(device_id), Some(public_key)) = (sender_device_id, sender_public_key) else {
         return;
@@ -489,7 +501,8 @@ async fn prompt_trust_device(
     };
 
     let device = TrustedDevice::new(device_id, sender_name.to_string(), public_key.to_string())
-        .with_trust_level(trust_level);
+        .with_trust_level(trust_level)
+        .with_address(sender_addr.ip(), sender_addr.port());
 
     match TrustStore::load() {
         Ok(mut store) => {
@@ -497,7 +510,7 @@ async fn prompt_trust_device(
                 eprintln!("  Failed to save trust: {}", e);
             } else {
                 println!();
-                println!("  Device trusted.");
+                println!("  Device trusted (address saved: {}).", sender_addr);
                 println!();
             }
         }

@@ -753,6 +753,10 @@ fn resolve_clipboard_receive_params(
 fn resolve_clipboard_sync_params(
     args: &super::ClipboardSyncArgs,
 ) -> Result<Option<(String, Option<SocketAddr>)>> {
+    if args.host.is_some() && args.code.is_none() {
+        bail!("--host requires a share code. Use: yoop clipboard sync --host <IP> <CODE>");
+    }
+
     if let Some(ref code_str) = args.code {
         let direct_addr = if let Some(ref host) = args.host {
             Some(parse_host_address(host)?)

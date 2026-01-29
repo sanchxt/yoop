@@ -20,7 +20,7 @@ pub struct SyncArgs {
     pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
-    #[arg(long, value_name = "IP[:PORT]")]
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
     pub host: Option<String>,
 
     /// Connect to a trusted device by name (no code needed)
@@ -144,6 +144,10 @@ fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<SyncMode> {
         })?;
 
         return Ok(SyncMode::TrustedClient { device });
+    }
+
+    if args.host.is_some() && args.code.is_none() {
+        anyhow::bail!("--host requires a share code. Use: yoop sync --host <IP> <CODE> <DIR>");
     }
 
     if let Some(ref code) = args.code {

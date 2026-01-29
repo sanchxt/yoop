@@ -193,7 +193,7 @@ pub struct ReceiveArgs {
     pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
-    #[arg(long, value_name = "IP[:PORT]")]
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
     pub host: Option<String>,
 
     /// Connect to a trusted device by name (no code needed)
@@ -472,7 +472,7 @@ pub struct ClipboardReceiveArgs {
     pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
-    #[arg(long, value_name = "IP[:PORT]")]
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
     pub host: Option<String>,
 
     /// Connect to a trusted device by name (no code needed)
@@ -491,7 +491,7 @@ pub struct ClipboardSyncArgs {
     pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
-    #[arg(long, value_name = "IP[:PORT]")]
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
     pub host: Option<String>,
 
     /// Connect to a trusted device by name (no code needed)
