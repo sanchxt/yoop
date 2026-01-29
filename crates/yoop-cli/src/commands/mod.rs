@@ -191,6 +191,10 @@ pub struct ReceiveArgs {
     /// Share code to connect to
     pub code: String,
 
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]")]
+    pub host: Option<String>,
+
     /// Output directory for received files
     #[arg(short, long)]
     pub output: Option<PathBuf>,
@@ -461,6 +465,10 @@ pub struct ClipboardReceiveArgs {
     /// Share code to connect to
     pub code: String,
 
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]")]
+    pub host: Option<String>,
+
     /// Non-interactive mode (auto-accept)
     #[arg(long)]
     pub batch: bool,
@@ -471,6 +479,10 @@ pub struct ClipboardReceiveArgs {
 pub struct ClipboardSyncArgs {
     /// Share code to connect to (omit to host new session)
     pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]")]
+    pub host: Option<String>,
 }
 
 /// Arguments for internal clipboard hold command (not user-facing)

@@ -253,6 +253,10 @@ pub enum Error {
     /// Compression/decompression error
     #[error("compression error: {0}")]
     Compression(String),
+
+    /// Invalid input provided
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl Error {

@@ -11,6 +11,7 @@ use yoop_core::clipboard::{
     SyncHostSession, SyncSessionRunner,
 };
 use yoop_core::config::Config;
+use yoop_core::connection::parse_host_address;
 use yoop_core::transfer::TransferConfig;
 
 use super::{ClipboardAction, ClipboardArgs};
@@ -151,7 +152,19 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
 
     let config = create_transfer_config(&global_config);
 
-    let mut session = match ClipboardReceiveSession::connect(&args.code, config).await {
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    let mut session = match ClipboardReceiveSession::connect_with_options(
+        &args.code,
+        direct_addr,
+        config,
+    )
+    .await
+    {
         Ok(s) => s,
         Err(e) => {
             if json {
@@ -278,21 +291,28 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
             println!();
         }
 
-        let (session, runner) = match ClipboardSyncSession::connect(code_str, config).await {
-            Ok(s) => s,
-            Err(e) => {
-                if json {
-                    let output = serde_json::json!({
-                        "status": "error",
-                        "error": format!("{}", e),
-                    });
-                    println!("{}", serde_json::to_string_pretty(&output)?);
-                } else if !quiet {
-                    eprintln!("  Error: {}", e);
-                }
-                bail!("{}", e);
-            }
+        let direct_addr = if let Some(ref host) = args.host {
+            Some(parse_host_address(host)?)
+        } else {
+            None
         };
+
+        let (session, runner) =
+            match ClipboardSyncSession::connect_with_options(code_str, direct_addr, config).await {
+                Ok(s) => s,
+                Err(e) => {
+                    if json {
+                        let output = serde_json::json!({
+                            "status": "error",
+                            "error": format!("{}", e),
+                        });
+                        println!("{}", serde_json::to_string_pretty(&output)?);
+                    } else if !quiet {
+                        eprintln!("  Error: {}", e);
+                    }
+                    bail!("{}", e);
+                }
+            };
 
         run_sync_session(session, runner, quiet, json).await
     } else {

@@ -225,6 +225,23 @@ impl SyncSession {
         config: SyncConfig,
         transfer_config: TransferConfig,
     ) -> Result<Self> {
+        Self::connect_with_options(code, None, config, transfer_config).await
+    }
+
+    /// Connect to a sync session with optional direct address.
+    ///
+    /// When `direct_addr` is provided, discovery is bypassed and connection
+    /// is made directly to the specified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or the handshake fails.
+    pub async fn connect_with_options(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<Self> {
         tracing::info!("Connecting to sync session with code: {}", code);
 
         let local_index = FileIndex::build(&config.sync_root, &config)?;
@@ -236,22 +253,28 @@ impl SyncSession {
 
         let session_key = crypto::derive_session_key(code);
 
-        let listener = HybridListener::new(transfer_config.discovery_port).await?;
+        let peer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(transfer_config.discovery_port).await?;
 
-        let share_code = ShareCode::parse(code)?;
-        let announcement = listener
-            .find(&share_code, transfer_config.discovery_timeout)
-            .await?;
+            let share_code = ShareCode::parse(code)?;
+            let announcement = listener
+                .find(&share_code, transfer_config.discovery_timeout)
+                .await?;
 
-        let peer_addr: SocketAddr = format!(
-            "{}:{}",
-            announcement.source.ip(),
-            announcement.packet.transfer_port
-        )
-        .parse()
-        .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
+            let addr: SocketAddr = format!(
+                "{}:{}",
+                announcement.source.ip(),
+                announcement.packet.transfer_port
+            )
+            .parse()
+            .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
 
-        tracing::info!("Found peer at {}", peer_addr);
+            tracing::info!("Found peer at {}", addr);
+            addr
+        };
 
         let tcp_stream = TcpStream::connect(peer_addr).await?;
         configure_tcp_keepalive(&tcp_stream)?;

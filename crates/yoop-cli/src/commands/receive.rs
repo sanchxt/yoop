@@ -10,6 +10,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use yoop_core::config::TrustLevel;
+use yoop_core::connection::parse_host_address;
 use yoop_core::file::{format_size, FileMetadata};
 use yoop_core::history::{
     HistoryFileEntry, HistoryStore, TransferDirection, TransferHistoryEntry,
@@ -60,7 +61,15 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         ..Default::default()
     };
 
-    let mut session = ReceiveSession::connect(&code, output_dir.clone(), config).await?;
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    let mut session =
+        ReceiveSession::connect_with_options(&code, output_dir.clone(), direct_addr, config)
+            .await?;
 
     let (sender_addr, sender_name) = session.sender();
     let sender_name = sender_name.to_string();

@@ -820,21 +820,43 @@ impl ReceiveSession {
         output_dir: PathBuf,
         config: TransferConfig,
     ) -> Result<Self> {
-        let listener = HybridListener::new(config.discovery_port).await?;
-        let discovered = listener.find(code, config.discovery_timeout).await?;
+        Self::connect_with_options(code, output_dir, None, config).await
+    }
 
-        if let Err(e) = listener.shutdown() {
-            tracing::debug!("Listener shutdown: {e}");
-        }
+    /// Connect to a file share with optional direct address.
+    ///
+    /// When `direct_addr` is provided, discovery is bypassed and connection
+    /// is made directly to the specified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails.
+    pub async fn connect_with_options(
+        code: &ShareCode,
+        output_dir: PathBuf,
+        direct_addr: Option<SocketAddr>,
+        config: TransferConfig,
+    ) -> Result<Self> {
+        let transfer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(config.discovery_port).await?;
+            let discovered = listener.find(code, config.discovery_timeout).await?;
 
-        tracing::info!(
-            "Found share from {} at {} (via hybrid discovery)",
-            discovered.packet.device_name,
-            discovered.source
-        );
+            if let Err(e) = listener.shutdown() {
+                tracing::debug!("Listener shutdown: {e}");
+            }
 
-        let transfer_addr =
-            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
+            tracing::info!(
+                "Found share from {} at {} (via hybrid discovery)",
+                discovered.packet.device_name,
+                discovered.source
+            );
+
+            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port)
+        };
+
         let stream = TcpStream::connect(transfer_addr).await?;
 
         configure_tcp_keepalive(&stream)?;
@@ -853,7 +875,7 @@ impl ReceiveSession {
 
         let session_key = crypto::derive_session_key(code.as_str());
 
-        let (sender_device_id, sender_public_key, _sender_compression) =
+        let (sender_name, sender_device_id, sender_public_key, _sender_compression) =
             Self::do_handshake(&mut tls_stream).await?;
 
         Self::do_code_verification(&mut tls_stream, code, &session_key).await?;
@@ -866,7 +888,7 @@ impl ReceiveSession {
 
         Ok(Self {
             sender_addr: transfer_addr,
-            sender_name: discovered.packet.device_name,
+            sender_name,
             sender_device_id,
             sender_public_key,
             files,
@@ -1166,7 +1188,7 @@ impl ReceiveSession {
 
         let session_key = crypto::derive_session_key(code.as_str());
 
-        let (sender_device_id, sender_public_key, _sender_compression) =
+        let (sender_name, sender_device_id, sender_public_key, _sender_compression) =
             Self::do_handshake(&mut tls_stream).await?;
         Self::do_code_verification(&mut tls_stream, &code, &session_key).await?;
 
@@ -1185,7 +1207,7 @@ impl ReceiveSession {
 
         Ok(Self {
             sender_addr: transfer_addr,
-            sender_name: discovered.packet.device_name,
+            sender_name,
             sender_device_id,
             sender_public_key,
             files,
@@ -1417,10 +1439,11 @@ impl ReceiveSession {
         let _ = self.progress_tx.send(progress);
     }
 
-    /// Returns (sender_device_id, sender_public_key, sender_compression_caps) from the Hello message.
+    /// Returns (sender_device_name, sender_device_id, sender_public_key, sender_compression_caps) from the Hello message.
     async fn do_handshake<S>(
         stream: &mut S,
     ) -> Result<(
+        String,
         Option<Uuid>,
         Option<String>,
         Option<crate::compression::CompressionCapabilities>,
@@ -1453,7 +1476,12 @@ impl ReceiveSession {
         let ack_payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
 
-        Ok((hello.device_id, hello.public_key, hello.compression))
+        Ok((
+            hello.device_name,
+            hello.device_id,
+            hello.public_key,
+            hello.compression,
+        ))
     }
 
     async fn do_code_verification<S>(

@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use yoop_core::connection::parse_host_address;
 use yoop_core::sync::{SyncConfig, SyncEvent, SyncSession};
 use yoop_core::transfer::TransferConfig;
 
@@ -15,6 +16,10 @@ pub struct SyncArgs {
 
     /// Share code to connect to (omit to host)
     pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]")]
+    pub host: Option<String>,
 
     /// Patterns to exclude (can be specified multiple times)
     #[arg(short = 'x', long = "exclude", action = clap::ArgAction::Append)]
@@ -159,7 +164,14 @@ async fn run_client(
         println!();
     }
 
-    let mut session = SyncSession::connect(code, config, transfer_config).await?;
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    let mut session =
+        SyncSession::connect_with_options(code, direct_addr, config, transfer_config).await?;
 
     if !args.quiet {
         println!("  ✓ Connected to: {}", session.peer_name());

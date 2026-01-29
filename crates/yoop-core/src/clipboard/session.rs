@@ -341,23 +341,44 @@ impl ClipboardReceiveSession {
     ///
     /// Returns an error if connection fails.
     pub async fn connect(code: &str, config: TransferConfig) -> Result<Self> {
+        Self::connect_with_options(code, None, config).await
+    }
+
+    /// Connect to a clipboard share session with optional direct address.
+    ///
+    /// When `direct_addr` is provided, discovery is bypassed and connection
+    /// is made directly to the specified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails.
+    pub async fn connect_with_options(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
+        config: TransferConfig,
+    ) -> Result<Self> {
         let code = ShareCode::parse(code)?;
 
-        let listener = HybridListener::new(config.discovery_port).await?;
-        let discovered = listener.find(&code, config.discovery_timeout).await?;
+        let transfer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(config.discovery_port).await?;
+            let discovered = listener.find(&code, config.discovery_timeout).await?;
 
-        if let Err(e) = listener.shutdown() {
-            tracing::debug!("Listener shutdown: {e}");
-        }
+            if let Err(e) = listener.shutdown() {
+                tracing::debug!("Listener shutdown: {e}");
+            }
 
-        tracing::info!(
-            "Found share from {} at {}",
-            discovered.packet.device_name,
-            discovered.source
-        );
+            tracing::info!(
+                "Found share from {} at {}",
+                discovered.packet.device_name,
+                discovered.source
+            );
 
-        let transfer_addr =
-            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
+            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port)
+        };
+
         let stream = TcpStream::connect(transfer_addr).await?;
 
         let tls_config = TlsConfig::client()?;
@@ -965,6 +986,22 @@ impl ClipboardSyncSession {
     ///
     /// Returns an error if connection fails.
     pub async fn connect(code: &str, config: TransferConfig) -> Result<(Self, SyncSessionRunner)> {
+        Self::connect_with_options(code, None, config).await
+    }
+
+    /// Connect to a sync host with optional direct address.
+    ///
+    /// When `direct_addr` is provided, discovery is bypassed and connection
+    /// is made directly to the specified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails.
+    pub async fn connect_with_options(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
+        config: TransferConfig,
+    ) -> Result<(Self, SyncSessionRunner)> {
         let code = ShareCode::parse(code)?;
 
         let device_name = hostname::get().map_or_else(
@@ -972,15 +1009,20 @@ impl ClipboardSyncSession {
             |h| h.to_string_lossy().to_string(),
         );
 
-        let listener = HybridListener::new(config.discovery_port).await?;
-        let discovered = listener.find(&code, config.discovery_timeout).await?;
+        let transfer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(config.discovery_port).await?;
+            let discovered = listener.find(&code, config.discovery_timeout).await?;
 
-        if let Err(e) = listener.shutdown() {
-            tracing::debug!("Listener shutdown: {e}");
-        }
+            if let Err(e) = listener.shutdown() {
+                tracing::debug!("Listener shutdown: {e}");
+            }
 
-        let transfer_addr =
-            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port);
+            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port)
+        };
+
         let stream = TcpStream::connect(transfer_addr).await?;
 
         let tls_config = TlsConfig::client()?;
