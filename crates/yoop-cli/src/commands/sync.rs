@@ -1,10 +1,12 @@
 //! Sync command handler for bidirectional directory synchronization.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use yoop_core::connection::parse_host_address;
 use yoop_core::sync::{SyncConfig, SyncEvent, SyncSession};
 use yoop_core::transfer::TransferConfig;
+use yoop_core::trust::TrustStore;
 
 use super::load_config;
 
@@ -20,6 +22,10 @@ pub struct SyncArgs {
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
     #[arg(long, value_name = "IP[:PORT]")]
     pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Patterns to exclude (can be specified multiple times)
     #[arg(short = 'x', long = "exclude", action = clap::ArgAction::Append)]
@@ -97,11 +103,43 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    if let Some(ref code) = args.code {
-        run_client(code, config, transfer_config, &args).await
+    if let Some((code, direct_addr)) = resolve_sync_params(&args)? {
+        run_client(&code, direct_addr, config, transfer_config, &args).await
     } else {
         run_host(config, transfer_config, &args).await
     }
+}
+
+/// Resolve connection parameters from sync args.
+fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<Option<(String, Option<SocketAddr>)>> {
+    if let Some(ref device_name) = args.device {
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
+
+        let addr = device
+            .address()
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
+
+        anyhow::bail!(
+            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
+            For now, please use: yoop sync ./folder --host {}:{} <CODE>\n\
+            where <CODE> is the share code displayed on the peer device.",
+            device_name, addr.0, addr.1, addr.0, addr.1
+        );
+    }
+
+    if let Some(ref code) = args.code {
+        let direct_addr = if let Some(ref host) = args.host {
+            Some(parse_host_address(host)?)
+        } else {
+            None
+        };
+        return Ok(Some((code.clone(), direct_addr)));
+    }
+
+    Ok(None)
 }
 
 async fn run_host(
@@ -151,6 +189,7 @@ async fn run_host(
 
 async fn run_client(
     code: &str,
+    direct_addr: Option<SocketAddr>,
     config: SyncConfig,
     transfer_config: TransferConfig,
     args: &SyncArgs,
@@ -163,12 +202,6 @@ async fn run_client(
         println!("  Syncing directory: {}", config.sync_root.display());
         println!();
     }
-
-    let direct_addr = if let Some(ref host) = args.host {
-        Some(parse_host_address(host)?)
-    } else {
-        None
-    };
 
     let mut session =
         SyncSession::connect_with_options(code, direct_addr, config, transfer_config).await?;

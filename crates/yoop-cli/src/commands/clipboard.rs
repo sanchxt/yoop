@@ -1,6 +1,7 @@
 //! Clipboard sharing command implementation.
 
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::time::Instant;
 
 use anyhow::{bail, Result};
@@ -13,6 +14,7 @@ use yoop_core::clipboard::{
 use yoop_core::config::Config;
 use yoop_core::connection::parse_host_address;
 use yoop_core::transfer::TransferConfig;
+use yoop_core::trust::TrustStore;
 
 use super::{ClipboardAction, ClipboardArgs};
 use crate::ui::{format_remaining, CodeBox};
@@ -133,33 +135,33 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
 async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool) -> Result<()> {
     let global_config = super::load_config();
 
+    let (code_str, direct_addr) = resolve_clipboard_receive_params(&args)?;
+
     if !quiet && !json {
         println!();
         println!("Yoop Clipboard Receive");
         println!("{}", "-".repeat(37));
         println!();
-        println!("  Searching for code {}...", args.code);
+        if args.device.is_some() {
+            println!("  Connecting to trusted device...");
+        } else {
+            println!("  Searching for code {}...", code_str);
+        }
         println!();
     }
 
     if json {
         let output = serde_json::json!({
             "status": "searching",
-            "code": &args.code,
+            "code": &code_str,
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
     let config = create_transfer_config(&global_config);
 
-    let direct_addr = if let Some(ref host) = args.host {
-        Some(parse_host_address(host)?)
-    } else {
-        None
-    };
-
     let mut session = match ClipboardReceiveSession::connect_with_options(
-        &args.code,
+        &code_str,
         direct_addr,
         config,
     )
@@ -285,20 +287,14 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
 
     let config = create_transfer_config(&global_config);
 
-    if let Some(ref code_str) = args.code {
+    if let Some((code_str, direct_addr)) = resolve_clipboard_sync_params(&args)? {
         if !quiet && !json {
             println!("  Connecting to sync session {}...", code_str);
             println!();
         }
 
-        let direct_addr = if let Some(ref host) = args.host {
-            Some(parse_host_address(host)?)
-        } else {
-            None
-        };
-
         let (session, runner) =
-            match ClipboardSyncSession::connect_with_options(code_str, direct_addr, config).await {
+            match ClipboardSyncSession::connect_with_options(&code_str, direct_addr, config).await {
                 Ok(s) => s,
                 Err(e) => {
                     if json {
@@ -517,4 +513,75 @@ fn print_clipboard_troubleshooting(error: &str) {
     }
 
     eprintln!();
+}
+
+/// Resolve connection parameters for clipboard receive.
+fn resolve_clipboard_receive_params(
+    args: &super::ClipboardReceiveArgs,
+) -> Result<(String, Option<SocketAddr>)> {
+    if let Some(ref device_name) = args.device {
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
+
+        let addr = device
+            .address()
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
+
+        bail!(
+            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
+            For now, please use: yoop clipboard receive --host {}:{} <CODE>\n\
+            where <CODE> is the share code displayed on the peer device.",
+            device_name, addr.0, addr.1, addr.0, addr.1
+        );
+    }
+
+    let code = args
+        .code
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Either a share code or --device must be provided"))?
+        .clone();
+
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    Ok((code, direct_addr))
+}
+
+/// Resolve connection parameters for clipboard sync.
+fn resolve_clipboard_sync_params(
+    args: &super::ClipboardSyncArgs,
+) -> Result<Option<(String, Option<SocketAddr>)>> {
+    if let Some(ref device_name) = args.device {
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
+
+        let addr = device
+            .address()
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
+
+        bail!(
+            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
+            For now, please use: yoop clipboard sync --host {}:{} <CODE>\n\
+            where <CODE> is the share code displayed on the peer device.",
+            device_name, addr.0, addr.1, addr.0, addr.1
+        );
+    }
+
+    if let Some(ref code_str) = args.code {
+        let direct_addr = if let Some(ref host) = args.host {
+            Some(parse_host_address(host)?)
+        } else {
+            None
+        };
+        return Ok(Some((code_str.clone(), direct_addr)));
+    }
+
+    Ok(None)
 }

@@ -29,14 +29,19 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
 
     super::spawn_update_check();
 
-    let code = yoop_core::code::ShareCode::parse(&args.code)?;
+    let (code_str, direct_addr) = resolve_connection_params(&args)?;
+    let code = yoop_core::code::ShareCode::parse(&code_str)?;
 
     if !args.quiet && !args.json {
         println!();
         println!("Yoop v{}", yoop_core::VERSION);
         println!("{}", "-".repeat(37));
         println!();
-        println!("  Searching for code {}...", code.as_str());
+        if args.device.is_some() {
+            println!("  Connecting to trusted device...");
+        } else {
+            println!("  Searching for code {}...", code.as_str());
+        }
         println!();
     }
 
@@ -59,12 +64,6 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         verify_checksums: global_config.transfer.verify_checksum,
         discovery_port: global_config.network.port,
         ..Default::default()
-    };
-
-    let direct_addr = if let Some(ref host) = args.host {
-        Some(parse_host_address(host)?)
-    } else {
-        None
     };
 
     let mut session =
@@ -476,4 +475,43 @@ async fn prompt_trust_device(
             eprintln!("  Failed to load trust store: {}", e);
         }
     }
+}
+
+/// Resolve connection parameters from command args.
+///
+/// Returns the code string and optional direct address based on --code, --host, or --device flags.
+fn resolve_connection_params(
+    args: &super::ReceiveArgs,
+) -> Result<(String, Option<std::net::SocketAddr>)> {
+    if let Some(ref device_name) = args.device {
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
+
+        let addr = device
+            .address()
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
+
+        anyhow::bail!(
+            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
+            For now, please use: yoop receive --host {}:{} <CODE>\n\
+            where <CODE> is the share code displayed on the peer device.",
+            device_name, addr.0, addr.1, addr.0, addr.1
+        );
+    }
+
+    let code = args
+        .code
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Either a share code or --device must be provided"))?
+        .clone();
+
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    Ok((code, direct_addr))
 }

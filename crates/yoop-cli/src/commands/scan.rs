@@ -150,8 +150,9 @@ async fn handle_interactive_mode(
     }
 
     let receive_args = ReceiveArgs {
-        code: input.to_uppercase(),
+        code: Some(input.to_uppercase()),
         host: None,
+        device: None,
         output: Some(PathBuf::from(".")),
         clipboard: false,
         quiet: false,

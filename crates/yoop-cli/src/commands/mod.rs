@@ -188,12 +188,17 @@ pub struct ShareArgs {
 /// Arguments for the receive command
 #[derive(Parser)]
 pub struct ReceiveArgs {
-    /// Share code to connect to
-    pub code: String,
+    /// Share code to connect to (required unless --device is used)
+    #[arg(required_unless_present = "device")]
+    pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
     #[arg(long, value_name = "IP[:PORT]")]
     pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Output directory for received files
     #[arg(short, long)]
@@ -462,12 +467,17 @@ pub struct ClipboardShareArgs {
 /// Arguments for clipboard receive
 #[derive(Parser)]
 pub struct ClipboardReceiveArgs {
-    /// Share code to connect to
-    pub code: String,
+    /// Share code to connect to (required unless --device is used)
+    #[arg(required_unless_present = "device")]
+    pub code: Option<String>,
 
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
     #[arg(long, value_name = "IP[:PORT]")]
     pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Non-interactive mode (auto-accept)
     #[arg(long)]
@@ -483,6 +493,10 @@ pub struct ClipboardSyncArgs {
     /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
     #[arg(long, value_name = "IP[:PORT]")]
     pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 }
 
 /// Arguments for internal clipboard hold command (not user-facing)
