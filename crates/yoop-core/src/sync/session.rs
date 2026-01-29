@@ -21,17 +21,20 @@ use super::engine::{SyncEngine, SyncPlan};
 use super::index::{FileEntry, FileIndex};
 use super::watcher::{FileEvent, FileEventKind, FileWatcher};
 use super::{FileKind, RelativePath, SyncConfig, SyncOp, SyncStats};
+use base64::prelude::*;
+
 use crate::code::{CodeGenerator, ShareCode};
-use crate::crypto::{self, TlsConfig};
+use crate::crypto::{self, DeviceIdentity, TlsConfig};
 use crate::discovery::{DiscoveryPacket, HybridBroadcaster, HybridListener};
 use crate::file::{FileChunk, FileChunker, FileWriter};
 use crate::protocol::{
     decode_payload, decode_sync_chunk, encode_payload, encode_sync_chunk, read_frame, write_frame,
     HelloPayload, MessageType, SyncCapabilities, SyncChunkAckPayload, SyncChunkPayload,
     SyncCompletePayload, SyncIndexEntry, SyncIndexPayload, SyncInitPayload, SyncOpAckPayload,
-    SyncOpPayload, SyncOpType,
+    SyncOpPayload, SyncOpType, TrustedHelloAckPayload, TrustedHelloPayload,
 };
 use crate::transfer::TransferConfig;
+use crate::trust::TrustedDevice;
 use crate::{Error, Result, DEFAULT_CHUNK_SIZE, PROTOCOL_VERSION};
 
 /// Events emitted during sync for UI updates.
@@ -315,6 +318,220 @@ impl SyncSession {
             tls_stream: Some(tokio_rustls::TlsStream::Client(tls_stream)),
             session_start: Instant::now(),
         })
+    }
+
+    /// Connect to a trusted device for directory sync (codeless).
+    ///
+    /// Uses TrustedHello handshake with signature verification instead of code.
+    /// After the trusted handshake, proceeds with the SyncInit/SyncInitAck protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails or trust verification fails.
+    pub async fn connect_trusted(
+        device: &TrustedDevice,
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<Self> {
+        let (ip, port) = device.address().ok_or_else(|| {
+            Error::ConfigError(format!(
+                "Device '{}' has no stored address. Connect with --host first.",
+                device.device_name
+            ))
+        })?;
+        let transfer_addr = SocketAddr::new(ip, port);
+
+        tracing::info!(
+            "Connecting to trusted device '{}' at {}",
+            device.device_name,
+            transfer_addr
+        );
+
+        let local_index = FileIndex::build(&config.sync_root, &config)?;
+        tracing::debug!(
+            "Built local index: {} files, {} bytes",
+            local_index.len(),
+            local_index.total_size()
+        );
+
+        let tcp_stream = TcpStream::connect(transfer_addr).await?;
+        configure_tcp_keepalive(&tcp_stream)?;
+
+        let tls_config = TlsConfig::client()?;
+        let client_config = tls_config
+            .client_config()
+            .ok_or_else(|| Error::Internal("client config not available".to_string()))?;
+        let connector = TlsConnector::from(Arc::new(client_config.clone()));
+        let domain = ServerName::try_from("yoop.local")
+            .map_err(|_| Error::TlsError("invalid server name".to_string()))?;
+
+        let mut tls_stream = connector.connect(domain, tcp_stream).await?;
+
+        let device_name = hostname::get().map_or_else(
+            |_| "Unknown".to_string(),
+            |h| h.to_string_lossy().to_string(),
+        );
+
+        let (peer_name, remote_index) = Self::handshake_trusted_client(
+            &mut tls_stream,
+            &device_name,
+            device,
+            &local_index,
+            &config,
+        )
+        .await?;
+
+        Ok(Self {
+            config,
+            transfer_config,
+            local_index,
+            remote_index,
+            peer_name: Some(peer_name),
+            stats: SyncStats::new(),
+            sync_engine: SyncEngine::new(ResolutionStrategy::default()),
+            op_id_counter: 0,
+            tls_stream: Some(tokio_rustls::TlsStream::Client(tls_stream)),
+            session_start: Instant::now(),
+        })
+    }
+
+    /// Trusted client-side handshake.
+    ///
+    /// Handles the TrustedHello/TrustedHelloAck flow, then proceeds
+    /// to the SyncInit/SyncInitAck protocol for index exchange.
+    #[allow(clippy::too_many_lines)]
+    async fn handshake_trusted_client<S>(
+        stream: &mut S,
+        device_name: &str,
+        expected_device: &TrustedDevice,
+        local_index: &FileIndex,
+        config: &SyncConfig,
+    ) -> Result<(String, FileIndex)>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (header, payload) = read_frame(stream).await?;
+
+        let peer_name = match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = decode_payload(&payload)?;
+
+                if hello.device_id != expected_device.device_id {
+                    return Err(Error::TrustError(format!(
+                        "Device ID mismatch: expected {}, got {}",
+                        expected_device.device_id, hello.device_id
+                    )));
+                }
+
+                if hello.public_key != expected_device.public_key {
+                    return Err(Error::TrustError(
+                        "Public key mismatch - device may have been reinstalled".to_string(),
+                    ));
+                }
+
+                let nonce_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid nonce: {e}")))?;
+
+                let signature_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce_signature)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
+
+                let sig_array: [u8; 64] = signature_bytes
+                    .try_into()
+                    .map_err(|_| Error::ProtocolError("Invalid signature length".to_string()))?;
+
+                if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
+                    return Err(Error::TrustError("Invalid signature".to_string()));
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let response_signature = identity.sign(&nonce_bytes);
+
+                let ack = TrustedHelloAckPayload {
+                    trusted: true,
+                    device_name: Some(device_name.to_string()),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    nonce_signature: Some(BASE64_STANDARD.encode(response_signature)),
+                    error: None,
+                    trust_level: Some("Full".to_string()),
+                };
+
+                let ack_payload = encode_payload(&ack)?;
+                write_frame(stream, MessageType::TrustedHelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = decode_payload(&payload)?;
+
+                if let (Some(device_id), Some(public_key)) = (&hello.device_id, &hello.public_key) {
+                    if *device_id != expected_device.device_id {
+                        return Err(Error::TrustError(format!(
+                            "Device ID mismatch: expected {}, got {}",
+                            expected_device.device_id, device_id
+                        )));
+                    }
+
+                    if *public_key != expected_device.public_key {
+                        return Err(Error::TrustError(
+                            "Public key mismatch - device may have been reinstalled".to_string(),
+                        ));
+                    }
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let ack = HelloPayload {
+                    device_name: device_name.to_string(),
+                    protocol_version: format!("{}.{}", PROTOCOL_VERSION.0, PROTOCOL_VERSION.1),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = encode_payload(&ack)?;
+                write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            _ => {
+                return Err(Error::UnexpectedMessage {
+                    expected: "TrustedHello or Hello".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
+        };
+
+        let (header, payload) = read_frame(stream).await?;
+        if header.message_type != MessageType::SyncInit {
+            return Err(Error::ProtocolError("expected SyncInit".to_string()));
+        }
+
+        let _remote_init: SyncInitPayload = decode_payload(&payload)?;
+
+        let sync_init_ack = SyncInitPayload {
+            sync_root_name: config
+                .sync_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("sync")
+                .to_string(),
+            file_count: local_index.len() as u64,
+            total_size: local_index.total_size(),
+            index_hash: local_index.root_hash(),
+            protocol_version: 1,
+            capabilities: SyncCapabilities::default(),
+        };
+        write_frame(
+            stream,
+            MessageType::SyncInitAck,
+            &encode_payload(&sync_init_ack)?,
+        )
+        .await?;
+
+        let remote_index = Self::exchange_index(stream, local_index).await?;
+
+        Ok((peer_name, remote_index))
     }
 
     /// Host-side handshake.

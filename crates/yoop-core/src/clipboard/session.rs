@@ -527,7 +527,7 @@ impl ClipboardReceiveSession {
             sender_addr: transfer_addr,
             sender_name,
             metadata,
-            _code: ShareCode::parse("XXXX")?, // Dummy code for trusted connection
+            _code: ShareCode::parse("XXXX")?,
             tls_stream: Some(tls_stream),
             keep_alive_handle: None,
         })
@@ -1486,6 +1486,7 @@ impl ClipboardSyncSession {
     /// # Errors
     ///
     /// Returns an error if connection fails.
+    #[allow(clippy::too_many_lines)]
     pub async fn connect_with_options(
         code: &str,
         direct_addr: Option<SocketAddr>,
@@ -1530,23 +1531,46 @@ impl ClipboardSyncSession {
         let session_key = crypto::derive_session_key(code.as_str());
 
         let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
-        if header.message_type != MessageType::Hello {
-            return Err(Error::UnexpectedMessage {
-                expected: "Hello".to_string(),
-                actual: format!("{:?}", header.message_type),
-            });
-        }
-        let peer_hello: HelloPayload = protocol::decode_payload(&payload)?;
 
-        let ack = HelloPayload {
-            device_name: device_name.clone(),
-            protocol_version: "1.0".to_string(),
-            device_id: None,
-            public_key: None,
-            compression: None,
+        let peer_name = match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = protocol::decode_payload(&payload)?;
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let ack = HelloPayload {
+                    device_name: device_name.clone(),
+                    protocol_version: "1.0".to_string(),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = protocol::decode_payload(&payload)?;
+
+                let ack = HelloPayload {
+                    device_name: device_name.clone(),
+                    protocol_version: "1.0".to_string(),
+                    device_id: None,
+                    public_key: None,
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            _ => {
+                return Err(Error::UnexpectedMessage {
+                    expected: "Hello or TrustedHello".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
         };
-        let ack_payload = protocol::encode_payload(&ack)?;
-        protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
 
         let hmac = crypto::hmac_sha256(&session_key, code.as_str().as_bytes());
         let verify = CodeVerifyPayload {
@@ -1571,7 +1595,7 @@ impl ClipboardSyncSession {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         let session = Self {
-            peer_name: peer_hello.device_name,
+            peer_name,
             peer_addr: transfer_addr,
             _device_name: device_name,
             last_local_hash: Arc::new(AtomicU64::new(0)),
@@ -1599,6 +1623,7 @@ impl ClipboardSyncSession {
     /// # Errors
     ///
     /// Returns an error if connection fails via all methods.
+    #[allow(clippy::too_many_lines)]
     pub async fn connect_with_fallback(
         code: &str,
         direct_addr: Option<SocketAddr>,
@@ -1646,23 +1671,46 @@ impl ClipboardSyncSession {
         let session_key = crypto::derive_session_key(code.as_str());
 
         let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
-        if header.message_type != MessageType::Hello {
-            return Err(Error::UnexpectedMessage {
-                expected: "Hello".to_string(),
-                actual: format!("{:?}", header.message_type),
-            });
-        }
-        let peer_hello: HelloPayload = protocol::decode_payload(&payload)?;
 
-        let ack = HelloPayload {
-            device_name: device_name.clone(),
-            protocol_version: "1.0".to_string(),
-            device_id: None,
-            public_key: None,
-            compression: None,
+        let peer_name = match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = protocol::decode_payload(&payload)?;
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let ack = HelloPayload {
+                    device_name: device_name.clone(),
+                    protocol_version: "1.0".to_string(),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = protocol::decode_payload(&payload)?;
+
+                let ack = HelloPayload {
+                    device_name: device_name.clone(),
+                    protocol_version: "1.0".to_string(),
+                    device_id: None,
+                    public_key: None,
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            _ => {
+                return Err(Error::UnexpectedMessage {
+                    expected: "Hello or TrustedHello".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
         };
-        let ack_payload = protocol::encode_payload(&ack)?;
-        protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
 
         let hmac = crypto::hmac_sha256(&session_key, code.as_str().as_bytes());
         let verify = CodeVerifyPayload {
@@ -1687,7 +1735,7 @@ impl ClipboardSyncSession {
         let (shutdown_tx, _) = broadcast::channel(1);
 
         let session = Self {
-            peer_name: peer_hello.device_name,
+            peer_name,
             peer_addr: transfer_addr,
             _device_name: device_name,
             last_local_hash: Arc::new(AtomicU64::new(0)),

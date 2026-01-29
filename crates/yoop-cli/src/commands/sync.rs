@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use yoop_core::connection::parse_host_address;
 use yoop_core::sync::{SyncConfig, SyncEvent, SyncSession};
 use yoop_core::transfer::TransferConfig;
-use yoop_core::trust::TrustStore;
+use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::load_config;
 
@@ -103,34 +103,47 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    if let Some((code, direct_addr)) = resolve_sync_params(&args)? {
-        run_client(&code, direct_addr, config, transfer_config, &args).await
-    } else {
-        run_host(config, transfer_config, &args).await
+    match resolve_sync_params(&args)? {
+        SyncMode::Host => run_host(config, transfer_config, &args).await,
+        SyncMode::CodeClient { code, direct_addr } => {
+            run_client(&code, direct_addr, config, transfer_config, &args).await
+        }
+        SyncMode::TrustedClient { device } => {
+            run_trusted_client(device, config, transfer_config, &args).await
+        }
     }
 }
 
+/// Connection mode for sync command.
+enum SyncMode {
+    /// Host a sync session (no code, no device).
+    Host,
+    /// Connect as client using a share code.
+    CodeClient {
+        code: String,
+        direct_addr: Option<SocketAddr>,
+    },
+    /// Connect as client to a trusted device (codeless).
+    TrustedClient { device: TrustedDevice },
+}
+
 /// Resolve connection parameters from sync args.
-fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<Option<(String, Option<SocketAddr>)>> {
+fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<SyncMode> {
     if let Some(ref device_name) = args.device {
         let trust_store = TrustStore::load()?;
         let device = trust_store
             .find_by_name(device_name)
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?
+            .clone();
 
-        let addr = device.address().ok_or_else(|| {
+        device.address().ok_or_else(|| {
             anyhow::anyhow!(
                 "Device '{}' has no stored address. Connect with code first to save the address.",
                 device_name
             )
         })?;
 
-        anyhow::bail!(
-            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
-            For now, please use: yoop sync ./folder --host {}:{} <CODE>\n\
-            where <CODE> is the share code displayed on the peer device.",
-            device_name, addr.0, addr.1, addr.0, addr.1
-        );
+        return Ok(SyncMode::TrustedClient { device });
     }
 
     if let Some(ref code) = args.code {
@@ -139,10 +152,13 @@ fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<Option<(String, Option
         } else {
             None
         };
-        return Ok(Some((code.clone(), direct_addr)));
+        return Ok(SyncMode::CodeClient {
+            code: code.clone(),
+            direct_addr,
+        });
     }
 
-    Ok(None)
+    Ok(SyncMode::Host)
 }
 
 async fn run_host(
@@ -208,6 +224,52 @@ async fn run_client(
 
     let mut session =
         SyncSession::connect_with_options(code, direct_addr, config, transfer_config).await?;
+
+    if !args.quiet {
+        println!("  ✓ Connected to: {}", session.peer_name());
+        println!("  Sync active (Ctrl+C to stop)");
+        println!();
+    }
+
+    let quiet = args.quiet;
+    let json = args.json;
+    let stats = session
+        .run(move |event| {
+            print_event(&event, quiet, json);
+        })
+        .await?;
+
+    if !args.quiet {
+        println!();
+        print_stats(&stats);
+    }
+
+    Ok(())
+}
+
+async fn run_trusted_client(
+    device: TrustedDevice,
+    config: SyncConfig,
+    transfer_config: TransferConfig,
+    args: &SyncArgs,
+) -> anyhow::Result<()> {
+    let (ip, port) = device
+        .address()
+        .expect("address checked in resolve_sync_params");
+
+    if !args.quiet {
+        println!("\nYoop v{}", env!("CARGO_PKG_VERSION"));
+        println!("─────────────────────────────────────");
+        println!();
+        println!(
+            "  Connecting to trusted device: {} ({}:{})",
+            device.device_name, ip, port
+        );
+        println!("  Syncing directory: {}", config.sync_root.display());
+        println!();
+    }
+
+    let mut session = SyncSession::connect_trusted(&device, config, transfer_config).await?;
 
     if !args.quiet {
         println!("  ✓ Connected to: {}", session.peer_name());

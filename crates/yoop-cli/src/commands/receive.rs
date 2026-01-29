@@ -29,32 +29,9 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
 
     super::spawn_update_check();
 
-    let (code_str, direct_addr) = resolve_connection_params(&args)?;
-    let code = yoop_core::code::ShareCode::parse(&code_str)?;
-
-    if !args.quiet && !args.json {
-        println!();
-        println!("Yoop v{}", yoop_core::VERSION);
-        println!("{}", "-".repeat(37));
-        println!();
-        if args.device.is_some() {
-            println!("  Connecting to trusted device...");
-        } else {
-            println!("  Searching for code {}...", code.as_str());
-        }
-        println!();
-    }
-
-    if args.json {
-        let output = serde_json::json!({
-            "status": "searching",
-            "code": code.as_str(),
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    }
-
     let output_dir = args
         .output
+        .clone()
         .or_else(|| global_config.general.default_output.clone())
         .unwrap_or_else(|| PathBuf::from("."));
 
@@ -66,9 +43,62 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         ..Default::default()
     };
 
-    let mut session =
-        ReceiveSession::connect_with_options(&code, output_dir.clone(), direct_addr, config)
-            .await?;
+    let (mut session, code_for_history) = if let Some(ref device_name) = args.device {
+        if !args.quiet && !args.json {
+            println!();
+            println!("Yoop v{}", yoop_core::VERSION);
+            println!("{}", "-".repeat(37));
+            println!();
+            println!("  Connecting to trusted device '{}'...", device_name);
+            println!();
+        }
+
+        if args.json {
+            let output = serde_json::json!({
+                "status": "connecting",
+                "device": device_name,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!(
+                "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
+                device_name
+            ))?
+            .clone();
+
+        let session = ReceiveSession::connect_trusted(&device, output_dir.clone(), config).await?;
+        (session, format!("trusted:{}", device_name))
+    } else {
+        let (code_str, direct_addr) = resolve_connection_params(&args)?;
+        let code = yoop_core::code::ShareCode::parse(&code_str)?;
+
+        if !args.quiet && !args.json {
+            println!();
+            println!("Yoop v{}", yoop_core::VERSION);
+            println!("{}", "-".repeat(37));
+            println!();
+            println!("  Searching for code {}...", code.as_str());
+            println!();
+        }
+
+        if args.json {
+            let output = serde_json::json!({
+                "status": "searching",
+                "code": code.as_str(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+
+        let code_for_history = code.as_str().to_string();
+        let session =
+            ReceiveSession::connect_with_options(&code, output_dir.clone(), direct_addr, config)
+                .await?;
+        (session, code_for_history)
+    };
 
     let (sender_addr, sender_name) = session.sender();
     let sender_name = sender_name.to_string();
@@ -164,7 +194,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         if args.json {
             let output = serde_json::json!({
                 "status": "declined",
-                "code": code.as_str(),
+                "code": &code_for_history,
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
@@ -193,7 +223,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
     match result {
         Ok(()) => {
             record_history(
-                code.as_str(),
+                &code_for_history,
                 &sender_name,
                 &files,
                 total_size,
@@ -222,7 +252,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
             if args.json {
                 let output = serde_json::json!({
                     "status": "complete",
-                    "code": code.as_str(),
+                    "code": &code_for_history,
                     "total_received": total_size,
                     "output_dir": output_dir.display().to_string(),
                 });
@@ -232,7 +262,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         }
         Err(e) => {
             record_history(
-                code.as_str(),
+                &code_for_history,
                 &sender_name,
                 &files,
                 total_size,
@@ -479,35 +509,19 @@ async fn prompt_trust_device(
 
 /// Resolve connection parameters from command args.
 ///
-/// Returns the code string and optional direct address based on --code, --host, or --device flags.
+/// Returns the code string and optional direct address based on --code and --host flags.
+/// Note: --device is handled separately in the run() function.
 fn resolve_connection_params(
     args: &super::ReceiveArgs,
 ) -> Result<(String, Option<std::net::SocketAddr>)> {
-    if let Some(ref device_name) = args.device {
-        let trust_store = TrustStore::load()?;
-        let device = trust_store
-            .find_by_name(device_name)
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
-
-        let addr = device.address().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Device '{}' has no stored address. Connect with code first to save the address.",
-                device_name
-            )
-        })?;
-
-        anyhow::bail!(
-            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
-            For now, please use: yoop receive --host {}:{} <CODE>\n\
-            where <CODE> is the share code displayed on the peer device.",
-            device_name, addr.0, addr.1, addr.0, addr.1
-        );
-    }
-
     let code = args
         .code
         .as_ref()
-        .ok_or_else(|| anyhow::anyhow!("Either a share code or --device must be provided"))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "A share code must be provided (or use --device for trusted connections)"
+            )
+        })?
         .clone();
 
     let direct_addr = if let Some(ref host) = args.host {
