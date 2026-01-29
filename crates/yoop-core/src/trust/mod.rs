@@ -19,6 +19,7 @@
 
 use std::fs;
 use std::io::{BufReader, BufWriter};
+use std::net::IpAddr;
 use std::path::PathBuf;
 use std::time::SystemTime;
 
@@ -47,6 +48,15 @@ pub struct TrustedDevice {
     pub trusted_at: SystemTime,
     /// Trust level
     pub trust_level: TrustLevel,
+    /// Last known IP address (for direct connection)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_known_ip: Option<IpAddr>,
+    /// Last known transfer port
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_known_port: Option<u16>,
+    /// When the address was last updated
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub address_updated_at: Option<SystemTime>,
 }
 
 impl TrustedDevice {
@@ -63,6 +73,9 @@ impl TrustedDevice {
             transfer_count: 1,
             trusted_at: now,
             trust_level: TrustLevel::AskEachTime,
+            last_known_ip: None,
+            last_known_port: None,
+            address_updated_at: None,
         }
     }
 
@@ -73,10 +86,25 @@ impl TrustedDevice {
         self
     }
 
+    /// Set the last known address.
+    #[must_use]
+    pub fn with_address(mut self, ip: IpAddr, port: u16) -> Self {
+        self.last_known_ip = Some(ip);
+        self.last_known_port = Some(port);
+        self.address_updated_at = Some(SystemTime::now());
+        self
+    }
+
     /// Update the last seen timestamp.
     pub fn update_last_seen(&mut self) {
         self.last_seen = SystemTime::now();
         self.transfer_count += 1;
+    }
+
+    /// Get the stored address if available.
+    #[must_use]
+    pub fn address(&self) -> Option<(IpAddr, u16)> {
+        self.last_known_ip.zip(self.last_known_port)
     }
 }
 
@@ -310,6 +338,45 @@ impl TrustStore {
         self.devices.clear();
         self.save()
     }
+
+    /// Update the stored address for a device.
+    ///
+    /// Called after successful connection to keep address current.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the store cannot be saved.
+    pub fn update_address(&mut self, device_id: &Uuid, ip: IpAddr, port: u16) -> Result<bool> {
+        if let Some(device) = self.devices.iter_mut().find(|d| &d.device_id == device_id) {
+            device.last_known_ip = Some(ip);
+            device.last_known_port = Some(port);
+            device.address_updated_at = Some(SystemTime::now());
+            self.save()?;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    /// Get the stored address for a device.
+    #[must_use]
+    pub fn get_address(&self, device_id: &Uuid) -> Option<(IpAddr, u16)> {
+        self.find_by_id(device_id).and_then(TrustedDevice::address)
+    }
+
+    /// Find devices that have stored addresses.
+    ///
+    /// Returns devices with stored addresses, sorted by last_seen (most recent first).
+    #[must_use]
+    pub fn get_devices_with_addresses(&self) -> Vec<&TrustedDevice> {
+        let mut devices: Vec<_> = self
+            .devices
+            .iter()
+            .filter(|d| d.last_known_ip.is_some() && d.last_known_port.is_some())
+            .collect();
+        devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        devices
+    }
 }
 
 #[cfg(test)]
@@ -394,5 +461,94 @@ mod tests {
         assert!(store.verify_key(&device_id, &public_key));
         assert!(!store.verify_key(&device_id, "wrong-key"));
         assert!(!store.verify_key(&Uuid::new_v4(), &public_key));
+    }
+
+    #[test]
+    fn test_trusted_device_address_storage() {
+        let device = TrustedDevice::new(
+            Uuid::new_v4(),
+            "Test Device".to_string(),
+            "test-public-key".to_string(),
+        )
+        .with_address("192.168.1.100".parse().unwrap(), 52530);
+
+        assert!(device.last_known_ip.is_some());
+        assert!(device.last_known_port.is_some());
+        assert!(device.address_updated_at.is_some());
+        assert_eq!(
+            device.address(),
+            Some(("192.168.1.100".parse().unwrap(), 52530))
+        );
+    }
+
+    #[test]
+    fn test_update_address() {
+        let tmp_dir = TempDir::new().unwrap();
+        let trust_path = tmp_dir.path().join("trust.json");
+
+        let mut store = TrustStore::load_from(trust_path).unwrap();
+        let device = create_test_device();
+        let device_id = device.device_id;
+        store.add(device).unwrap();
+
+        let ip: IpAddr = "100.103.164.32".parse().unwrap();
+        assert!(store.update_address(&device_id, ip, 52530).unwrap());
+
+        let updated = store.find_by_id(&device_id).unwrap();
+        assert_eq!(updated.last_known_ip, Some(ip));
+        assert_eq!(updated.last_known_port, Some(52530));
+        assert!(updated.address_updated_at.is_some());
+    }
+
+    #[test]
+    fn test_get_devices_with_addresses() {
+        let tmp_dir = TempDir::new().unwrap();
+        let trust_path = tmp_dir.path().join("trust.json");
+
+        let mut store = TrustStore::load_from(trust_path).unwrap();
+
+        let device1 = TrustedDevice::new(
+            Uuid::new_v4(),
+            "Device 1".to_string(),
+            "key1".to_string(),
+        )
+        .with_address("192.168.1.1".parse().unwrap(), 52530);
+
+        let device2 = TrustedDevice::new(
+            Uuid::new_v4(),
+            "Device 2".to_string(),
+            "key2".to_string(),
+        );
+
+        let device3 = TrustedDevice::new(
+            Uuid::new_v4(),
+            "Device 3".to_string(),
+            "key3".to_string(),
+        )
+        .with_address("192.168.1.3".parse().unwrap(), 52540);
+
+        store.add(device1).unwrap();
+        store.add(device2).unwrap();
+        store.add(device3).unwrap();
+
+        let devices_with_addr = store.get_devices_with_addresses();
+        assert_eq!(devices_with_addr.len(), 2);
+    }
+
+    #[test]
+    fn test_backward_compatibility_no_address() {
+        let tmp_dir = TempDir::new().unwrap();
+        let trust_path = tmp_dir.path().join("trust.json");
+
+        let mut store = TrustStore::load_from(trust_path.clone()).unwrap();
+        let device = create_test_device();
+        let device_id = device.device_id;
+        store.add(device).unwrap();
+
+        let loaded_store = TrustStore::load_from(trust_path).unwrap();
+        let loaded_device = loaded_store.find_by_id(&device_id).unwrap();
+        assert!(loaded_device.last_known_ip.is_none());
+        assert!(loaded_device.last_known_port.is_none());
+        assert!(loaded_device.address_updated_at.is_none());
     }
 }
