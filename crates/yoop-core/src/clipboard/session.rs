@@ -414,6 +414,75 @@ impl ClipboardReceiveSession {
         })
     }
 
+    /// Connect to a clipboard share with fallback to stored IP addresses.
+    ///
+    /// First tries normal discovery, then falls back to stored addresses from
+    /// trusted devices if discovery fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails via all methods.
+    pub async fn connect_with_fallback(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
+        fallback_addresses: &[(std::net::IpAddr, u16)],
+        config: TransferConfig,
+    ) -> Result<Self> {
+        let code = ShareCode::parse(code)?;
+
+        let transfer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(config.discovery_port).await?;
+            let discovered = listener
+                .find_with_fallback(&code, config.discovery_timeout, fallback_addresses)
+                .await?;
+
+            if let Err(e) = listener.shutdown() {
+                tracing::debug!("Listener shutdown: {e}");
+            }
+
+            tracing::info!(
+                "Found share from {} at {}",
+                discovered.packet.device_name,
+                discovered.source
+            );
+
+            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port)
+        };
+
+        let stream = TcpStream::connect(transfer_addr).await?;
+
+        let tls_config = TlsConfig::client()?;
+        let connector = TlsConnector::from(Arc::new(
+            tls_config
+                .client_config()
+                .ok_or_else(|| Error::TlsError("no client config".to_string()))?
+                .clone(),
+        ));
+
+        let mut tls_stream = connector
+            .connect("localhost".try_into().unwrap(), stream)
+            .await
+            .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
+
+        let session_key = crypto::derive_session_key(code.as_str());
+
+        let sender_name = Self::do_handshake(&mut tls_stream).await?;
+        Self::do_code_verification(&mut tls_stream, &code, &session_key).await?;
+        let metadata = Self::receive_metadata(&mut tls_stream, &sender_name).await?;
+
+        Ok(Self {
+            sender_addr: transfer_addr,
+            sender_name,
+            metadata,
+            _code: code,
+            tls_stream: Some(tls_stream),
+            keep_alive_handle: None,
+        })
+    }
+
     /// Connect to a trusted device for clipboard receive (codeless).
     ///
     /// Uses TrustedHello handshake with signature verification instead of code.
@@ -1439,6 +1508,122 @@ impl ClipboardSyncSession {
         } else {
             let listener = HybridListener::new(config.discovery_port).await?;
             let discovered = listener.find(&code, config.discovery_timeout).await?;
+
+            if let Err(e) = listener.shutdown() {
+                tracing::debug!("Listener shutdown: {e}");
+            }
+
+            SocketAddr::new(discovered.source.ip(), discovered.packet.transfer_port)
+        };
+
+        let stream = TcpStream::connect(transfer_addr).await?;
+
+        let tls_config = TlsConfig::client()?;
+        let connector = TlsConnector::from(Arc::new(
+            tls_config
+                .client_config()
+                .ok_or_else(|| Error::TlsError("no client config".to_string()))?
+                .clone(),
+        ));
+
+        let mut tls_stream = connector
+            .connect("localhost".try_into().unwrap(), stream)
+            .await
+            .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
+
+        let session_key = crypto::derive_session_key(code.as_str());
+
+        let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
+        if header.message_type != MessageType::Hello {
+            return Err(Error::UnexpectedMessage {
+                expected: "Hello".to_string(),
+                actual: format!("{:?}", header.message_type),
+            });
+        }
+        let peer_hello: HelloPayload = protocol::decode_payload(&payload)?;
+
+        let ack = HelloPayload {
+            device_name: device_name.clone(),
+            protocol_version: "1.0".to_string(),
+            device_id: None,
+            public_key: None,
+            compression: None,
+        };
+        let ack_payload = protocol::encode_payload(&ack)?;
+        protocol::write_frame(&mut tls_stream, MessageType::HelloAck, &ack_payload).await?;
+
+        let hmac = crypto::hmac_sha256(&session_key, code.as_str().as_bytes());
+        let verify = CodeVerifyPayload {
+            code_hmac: hmac.to_vec(),
+        };
+        let payload = protocol::encode_payload(&verify)?;
+        protocol::write_frame(&mut tls_stream, MessageType::CodeVerify, &payload).await?;
+
+        let (header, ack_payload) = protocol::read_frame(&mut tls_stream).await?;
+        if header.message_type != MessageType::CodeVerifyAck {
+            return Err(Error::UnexpectedMessage {
+                expected: "CodeVerifyAck".to_string(),
+                actual: format!("{:?}", header.message_type),
+            });
+        }
+
+        let ack: CodeVerifyAckPayload = protocol::decode_payload(&ack_payload)?;
+        if !ack.success {
+            return Err(Error::CodeNotFound(code.to_string()));
+        }
+
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        let session = Self {
+            peer_name: peer_hello.device_name,
+            peer_addr: transfer_addr,
+            _device_name: device_name,
+            last_local_hash: Arc::new(AtomicU64::new(0)),
+            last_remote_hash: Arc::new(AtomicU64::new(0)),
+            stats: SyncStats::default(),
+            started_at: Instant::now(),
+            shutdown_tx: shutdown_tx.clone(),
+        };
+
+        let runner = SyncSessionRunner {
+            tls_stream: TlsStreamKind::Client(tls_stream),
+            last_local_hash: Arc::clone(&session.last_local_hash),
+            last_remote_hash: Arc::clone(&session.last_remote_hash),
+            shutdown_rx: shutdown_tx.subscribe(),
+        };
+
+        Ok((session, runner))
+    }
+
+    /// Connect to a sync host with fallback to stored IP addresses.
+    ///
+    /// First tries normal discovery, then falls back to stored addresses from
+    /// trusted devices if discovery fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails via all methods.
+    pub async fn connect_with_fallback(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
+        fallback_addresses: &[(std::net::IpAddr, u16)],
+        config: TransferConfig,
+    ) -> Result<(Self, SyncSessionRunner)> {
+        let code = ShareCode::parse(code)?;
+
+        let device_name = hostname::get().map_or_else(
+            |_| "Unknown".to_string(),
+            |h| h.to_string_lossy().to_string(),
+        );
+
+        let transfer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(config.discovery_port).await?;
+            let discovered = listener
+                .find_with_fallback(&code, config.discovery_timeout, fallback_addresses)
+                .await?;
 
             if let Err(e) = listener.shutdown() {
                 tracing::debug!("Listener shutdown: {e}");
