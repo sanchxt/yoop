@@ -134,6 +134,11 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
 #[allow(clippy::too_many_lines)]
 async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool) -> Result<()> {
     let global_config = super::load_config();
+    let config = create_transfer_config(&global_config);
+
+    if let Some(ref device_name) = args.device {
+        return run_receive_trusted(device_name, config, &args, quiet, json).await;
+    }
 
     let (code_str, direct_addr) = resolve_clipboard_receive_params(&args)?;
 
@@ -142,11 +147,7 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
         println!("Yoop Clipboard Receive");
         println!("{}", "-".repeat(37));
         println!();
-        if args.device.is_some() {
-            println!("  Connecting to trusted device...");
-        } else {
-            println!("  Searching for code {}...", code_str);
-        }
+        println!("  Searching for code {}...", code_str);
         println!();
     }
 
@@ -157,8 +158,6 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
         });
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
-
-    let config = create_transfer_config(&global_config);
 
     let mut session = match ClipboardReceiveSession::connect_with_options(
         &code_str,
@@ -274,9 +273,157 @@ async fn run_receive(args: super::ClipboardReceiveArgs, quiet: bool, json: bool)
     }
 }
 
+/// Run clipboard receive with trusted device connection.
+#[allow(clippy::too_many_lines)]
+async fn run_receive_trusted(
+    device_name: &str,
+    config: TransferConfig,
+    args: &super::ClipboardReceiveArgs,
+    quiet: bool,
+    json: bool,
+) -> Result<()> {
+    let trust_store = TrustStore::load()?;
+    let device = trust_store
+        .find_by_name(device_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
+                device_name
+            )
+        })?
+        .clone();
+
+    if !quiet && !json {
+        println!();
+        println!("Yoop Clipboard Receive");
+        println!("{}", "-".repeat(37));
+        println!();
+        println!("  Connecting to trusted device '{}'...", device_name);
+        println!();
+    }
+
+    if json {
+        let output = serde_json::json!({
+            "status": "connecting",
+            "device": device_name,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+
+    let mut session = match ClipboardReceiveSession::connect_trusted(&device, config).await {
+        Ok(s) => s,
+        Err(e) => {
+            if json {
+                let output = serde_json::json!({
+                    "status": "error",
+                    "error": format!("{}", e),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if !quiet {
+                eprintln!("  Error: {}", e);
+            }
+            bail!("{}", e);
+        }
+    };
+
+    let (sender_addr, sender_name) = session.sender();
+    let metadata = session.metadata();
+    let preview = metadata.as_ref().map_or_else(
+        || "unknown".to_string(),
+        |m| format!("{:?}, {} bytes", m.content_type, m.size),
+    );
+
+    if json {
+        let output = serde_json::json!({
+            "status": "connected",
+            "sender": {
+                "name": sender_name,
+                "address": sender_addr.to_string(),
+            },
+            "content": {
+                "type": metadata.as_ref().map(|m| format!("{:?}", m.content_type)),
+                "size": metadata.as_ref().map(|m| m.size),
+            },
+            "trusted": true,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if !quiet {
+        println!("  Connected to: {} ({}) [trusted]", sender_name, sender_addr);
+        println!("  Content: {}", preview);
+        println!();
+    }
+
+    let accepted = if !args.batch && !json && !quiet {
+        session.start_keep_alive()?;
+
+        print!("  Accept clipboard content? [Y/n] ");
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        let stdin = tokio::io::stdin();
+        let mut reader = BufReader::new(stdin);
+        reader.read_line(&mut input).await?;
+        let input = input.trim().to_lowercase();
+
+        input.is_empty() || input == "y" || input == "yes"
+    } else {
+        true
+    };
+
+    if !accepted {
+        session.decline().await;
+        if !quiet && !json {
+            println!();
+            println!("  Transfer declined.");
+            println!();
+        }
+        if json {
+            let output = serde_json::json!({
+                "status": "declined",
+                "device": device_name,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+        return Ok(());
+    }
+
+    let result = session.accept_to_clipboard().await;
+
+    match result {
+        Ok(()) => {
+            if json {
+                let output = serde_json::json!({
+                    "status": "complete",
+                    "device": device_name,
+                    "trusted": true,
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if !quiet {
+                println!();
+                println!("  Clipboard received and copied!");
+                println!();
+            }
+            Ok(())
+        }
+        Err(e) => {
+            if json {
+                let output = serde_json::json!({
+                    "status": "error",
+                    "error": format!("{}", e),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if !quiet {
+                eprintln!("  Error: {}", e);
+            }
+            Err(e.into())
+        }
+    }
+}
+
 /// Run clipboard sync (bidirectional live sync).
 async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Result<()> {
     let global_config = super::load_config();
+    let config = create_transfer_config(&global_config);
 
     if !quiet && !json {
         println!();
@@ -285,7 +432,9 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
         println!();
     }
 
-    let config = create_transfer_config(&global_config);
+    if let Some(ref device_name) = args.device {
+        return run_sync_trusted(device_name, config, quiet, json).await;
+    }
 
     if let Some((code_str, direct_addr)) = resolve_clipboard_sync_params(&args)? {
         if !quiet && !json {
@@ -341,14 +490,72 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
             println!();
         }
 
-        let (session, runner) = wait_for_peer_with_display(host_session, quiet, json).await?;
+        let trust_store = TrustStore::load().ok();
+        let (session, runner) =
+            wait_for_peer_with_display(host_session, trust_store.as_ref(), quiet, json).await?;
 
         run_sync_session(session, runner, quiet, json).await
     }
 }
 
+/// Run clipboard sync with trusted device connection.
+async fn run_sync_trusted(
+    device_name: &str,
+    config: TransferConfig,
+    quiet: bool,
+    json: bool,
+) -> Result<()> {
+    let trust_store = TrustStore::load()?;
+    let device = trust_store
+        .find_by_name(device_name)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
+                device_name
+            )
+        })?
+        .clone();
+
+    if !quiet && !json {
+        println!("  Connecting to trusted device '{}'...", device_name);
+        println!();
+    }
+
+    if json {
+        let output = serde_json::json!({
+            "status": "connecting",
+            "device": device_name,
+        });
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    }
+
+    let (session, runner) = match ClipboardSyncSession::connect_trusted(&device, config).await {
+        Ok(s) => s,
+        Err(e) => {
+            if json {
+                let output = serde_json::json!({
+                    "status": "error",
+                    "error": format!("{}", e),
+                });
+                println!("{}", serde_json::to_string_pretty(&output)?);
+            } else if !quiet {
+                eprintln!("  Error: {}", e);
+            }
+            bail!("{}", e);
+        }
+    };
+
+    if !quiet && !json {
+        println!("  Connected to trusted device '{}' [trusted]", session.peer_name());
+        println!();
+    }
+
+    run_sync_session(session, runner, quiet, json).await
+}
+
 async fn wait_for_peer_with_display(
     host_session: SyncHostSession,
+    trust_store: Option<&TrustStore>,
     quiet: bool,
     json: bool,
 ) -> Result<(ClipboardSyncSession, SyncSessionRunner)> {
@@ -375,7 +582,7 @@ async fn wait_for_peer_with_display(
         None
     };
 
-    let result = host_session.wait_for_peer().await;
+    let result = host_session.wait_for_peer_with_trust(trust_store).await;
 
     stop.store(true, Ordering::Relaxed);
     if let Some(task) = display_task {
@@ -515,28 +722,11 @@ fn print_clipboard_troubleshooting(error: &str) {
     eprintln!();
 }
 
-/// Resolve connection parameters for clipboard receive.
+/// Resolve connection parameters for clipboard receive (code-based only).
+/// The --device case is handled separately in run_receive.
 fn resolve_clipboard_receive_params(
     args: &super::ClipboardReceiveArgs,
 ) -> Result<(String, Option<SocketAddr>)> {
-    if let Some(ref device_name) = args.device {
-        let trust_store = TrustStore::load()?;
-        let device = trust_store
-            .find_by_name(device_name)
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
-
-        let addr = device
-            .address()
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
-
-        bail!(
-            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
-            For now, please use: yoop clipboard receive --host {}:{} <CODE>\n\
-            where <CODE> is the share code displayed on the peer device.",
-            device_name, addr.0, addr.1, addr.0, addr.1
-        );
-    }
-
     let code = args
         .code
         .as_ref()
@@ -552,28 +742,11 @@ fn resolve_clipboard_receive_params(
     Ok((code, direct_addr))
 }
 
-/// Resolve connection parameters for clipboard sync.
+/// Resolve connection parameters for clipboard sync (code-based only).
+/// The --device case is handled separately in run_sync.
 fn resolve_clipboard_sync_params(
     args: &super::ClipboardSyncArgs,
 ) -> Result<Option<(String, Option<SocketAddr>)>> {
-    if let Some(ref device_name) = args.device {
-        let trust_store = TrustStore::load()?;
-        let device = trust_store
-            .find_by_name(device_name)
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?;
-
-        let addr = device
-            .address()
-            .ok_or_else(|| anyhow::anyhow!("Device '{}' has no stored address. Connect with code first to save the address.", device_name))?;
-
-        bail!(
-            "Device '{}' found at {}:{}, but codeless trusted connections are not yet implemented.\n\
-            For now, please use: yoop clipboard sync --host {}:{} <CODE>\n\
-            where <CODE> is the share code displayed on the peer device.",
-            device_name, addr.0, addr.1, addr.0, addr.1
-        );
-    }
-
     if let Some(ref code_str) = args.code {
         let direct_addr = if let Some(ref host) = args.host {
             Some(parse_host_address(host)?)

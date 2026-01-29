@@ -147,6 +147,10 @@ pub enum Error {
     #[error("trust database error: {0}")]
     TrustDbError(String),
 
+    /// Trust verification failed
+    #[error("trust verification failed: {0}")]
+    TrustError(String),
+
     /// Preview generation failed
     #[error("failed to generate preview for '{file}': {reason}")]
     PreviewFailed {

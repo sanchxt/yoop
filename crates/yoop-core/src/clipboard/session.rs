@@ -17,15 +17,19 @@ use tokio::sync::{broadcast, mpsc, oneshot};
 use tokio::task::JoinHandle;
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
+use base64::prelude::*;
+
 use crate::code::{CodeGenerator, ShareCode};
-use crate::crypto::{self, TlsConfig};
+use crate::crypto::{self, DeviceIdentity, TlsConfig};
 use crate::discovery::{DiscoveryPacket, HybridBroadcaster, HybridListener};
 use crate::error::{Error, Result};
 use crate::protocol::{
     self, ClipboardAckPayload, ClipboardChangedPayload, ClipboardContentType, ClipboardMetaPayload,
-    CodeVerifyAckPayload, CodeVerifyPayload, HelloPayload, MessageType,
+    CodeVerifyAckPayload, CodeVerifyPayload, HelloPayload, MessageType, TrustedHelloAckPayload,
+    TrustedHelloPayload,
 };
 use crate::transfer::TransferConfig;
+use crate::trust::TrustedDevice;
 
 use super::watcher::ClipboardWatcher;
 use super::{create_clipboard, ClipboardContent, ClipboardMetadata};
@@ -410,6 +414,60 @@ impl ClipboardReceiveSession {
         })
     }
 
+    /// Connect to a trusted device for clipboard receive (codeless).
+    ///
+    /// Uses TrustedHello handshake with signature verification instead of code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails or trust verification fails.
+    pub async fn connect_trusted(
+        device: &TrustedDevice,
+        _config: TransferConfig,
+    ) -> Result<Self> {
+        let (ip, port) = device.address().ok_or_else(|| {
+            Error::ConfigError(format!(
+                "Device '{}' has no stored address. Connect with --host first.",
+                device.device_name
+            ))
+        })?;
+        let transfer_addr = SocketAddr::new(ip, port);
+
+        tracing::info!(
+            "Connecting to trusted device '{}' at {}",
+            device.device_name,
+            transfer_addr
+        );
+
+        let stream = TcpStream::connect(transfer_addr).await?;
+
+        let tls_config = TlsConfig::client()?;
+        let connector = TlsConnector::from(Arc::new(
+            tls_config
+                .client_config()
+                .ok_or_else(|| Error::TlsError("no client config".to_string()))?
+                .clone(),
+        ));
+
+        let mut tls_stream = connector
+            .connect("localhost".try_into().unwrap(), stream)
+            .await
+            .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
+
+        let sender_name =
+            Self::do_trusted_handshake(&mut tls_stream, device).await?;
+        let metadata = Self::receive_metadata(&mut tls_stream, &sender_name).await?;
+
+        Ok(Self {
+            sender_addr: transfer_addr,
+            sender_name,
+            metadata,
+            _code: ShareCode::parse("XXXX")?, // Dummy code for trusted connection
+            tls_stream: Some(tls_stream),
+            keep_alive_handle: None,
+        })
+    }
+
     /// Get content metadata as optional (for CLI compatibility).
     #[must_use]
     pub fn metadata(&self) -> Option<&ClipboardMetadata> {
@@ -763,6 +821,114 @@ impl ClipboardReceiveSession {
         Ok(())
     }
 
+    async fn do_trusted_handshake<S>(
+        stream: &mut S,
+        expected_device: &TrustedDevice,
+    ) -> Result<String>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (header, payload) = protocol::read_frame(stream).await?;
+
+        match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = protocol::decode_payload(&payload)?;
+
+                if hello.device_id != expected_device.device_id {
+                    return Err(Error::TrustError(format!(
+                        "Device ID mismatch: expected {}, got {}",
+                        expected_device.device_id, hello.device_id
+                    )));
+                }
+
+                if hello.public_key != expected_device.public_key {
+                    return Err(Error::TrustError(
+                        "Public key mismatch - device may have been reinstalled".to_string(),
+                    ));
+                }
+
+                let nonce_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid nonce: {e}")))?;
+
+                let signature_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce_signature)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
+
+                let sig_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
+                    Error::ProtocolError("Invalid signature length".to_string())
+                })?;
+
+                if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
+                    return Err(Error::TrustError("Invalid signature".to_string()));
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let device_name = hostname::get().map_or_else(
+                    |_| "Unknown".to_string(),
+                    |h| h.to_string_lossy().to_string(),
+                );
+
+                let response_signature = identity.sign(&nonce_bytes);
+
+                let ack = TrustedHelloAckPayload {
+                    trusted: true,
+                    device_name: Some(device_name),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    nonce_signature: Some(BASE64_STANDARD.encode(response_signature)),
+                    error: None,
+                    trust_level: Some("Full".to_string()),
+                };
+
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::TrustedHelloAck, &ack_payload).await?;
+
+                Ok(hello.device_name)
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = protocol::decode_payload(&payload)?;
+
+                if let (Some(device_id), Some(public_key)) = (&hello.device_id, &hello.public_key) {
+                    if *device_id != expected_device.device_id {
+                        return Err(Error::TrustError(format!(
+                            "Device ID mismatch: expected {}, got {}",
+                            expected_device.device_id, device_id
+                        )));
+                    }
+
+                    if *public_key != expected_device.public_key {
+                        return Err(Error::TrustError(
+                            "Public key mismatch - device may have been reinstalled".to_string(),
+                        ));
+                    }
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let device_name = hostname::get().map_or_else(
+                    |_| "Unknown".to_string(),
+                    |h| h.to_string_lossy().to_string(),
+                );
+
+                let ack = HelloPayload {
+                    device_name,
+                    protocol_version: "1.0".to_string(),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
+
+                Ok(hello.device_name)
+            }
+            _ => Err(Error::UnexpectedMessage {
+                expected: "TrustedHello or Hello".to_string(),
+                actual: format!("{:?}", header.message_type),
+            }),
+        }
+    }
+
     async fn receive_metadata<S>(stream: &mut S, sender_name: &str) -> Result<ClipboardMetadata>
     where
         S: AsyncRead + AsyncWrite + Unpin,
@@ -828,12 +994,34 @@ impl SyncHostSession {
     /// Wait for a peer to connect and complete the handshake.
     ///
     /// This method blocks until a peer connects, performs TLS handshake,
-    /// and verifies the share code.
+    /// and verifies the share code (or trusts verified device).
+    ///
+    /// Supports both:
+    /// - Code-based connections (regular Hello flow)
+    /// - Trusted connections (TrustedHelloAck flow, skips code verification)
     ///
     /// # Errors
     ///
     /// Returns an error if connection or handshake fails.
     pub async fn wait_for_peer(self) -> Result<(ClipboardSyncSession, SyncSessionRunner)> {
+        self.wait_for_peer_with_trust(None).await
+    }
+
+    /// Wait for a peer with optional trust store for trusted connections.
+    ///
+    /// When `trust_store` is provided, accepts trusted connections from
+    /// devices in the store without requiring code verification.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection or handshake fails.
+    #[allow(clippy::too_many_lines)]
+    pub async fn wait_for_peer_with_trust(
+        self,
+        trust_store: Option<&crate::trust::TrustStore>,
+    ) -> Result<(ClipboardSyncSession, SyncSessionRunner)> {
+        use rand::RngCore;
+
         let (stream, peer_addr) = self.listener.accept().await?;
         self.broadcaster.stop().await;
 
@@ -849,56 +1037,122 @@ impl SyncHostSession {
             .await
             .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
 
-        let hello = HelloPayload {
+        let identity = DeviceIdentity::load_or_generate()?;
+
+        let mut nonce = [0u8; 32];
+        rand::rngs::OsRng.fill_bytes(&mut nonce);
+        let nonce_signature = identity.sign(&nonce);
+
+        let hello = TrustedHelloPayload {
             device_name: self.device_name.clone(),
             protocol_version: "1.0".to_string(),
-            device_id: None,
-            public_key: None,
-            compression: None,
+            device_id: identity.device_id(),
+            public_key: identity.public_key_base64(),
+            nonce: BASE64_STANDARD.encode(nonce),
+            nonce_signature: BASE64_STANDARD.encode(nonce_signature),
         };
         let payload = protocol::encode_payload(&hello)?;
-        protocol::write_frame(&mut tls_stream, MessageType::Hello, &payload).await?;
+        protocol::write_frame(&mut tls_stream, MessageType::TrustedHello, &payload).await?;
 
         let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
-        if header.message_type != MessageType::HelloAck {
-            return Err(Error::UnexpectedMessage {
-                expected: "HelloAck".to_string(),
-                actual: format!("{:?}", header.message_type),
-            });
-        }
-        let peer_hello: HelloPayload = protocol::decode_payload(&payload)?;
 
-        let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
-        if header.message_type != MessageType::CodeVerify {
-            return Err(Error::UnexpectedMessage {
-                expected: "CodeVerify".to_string(),
-                actual: format!("{:?}", header.message_type),
-            });
-        }
+        let (peer_name, is_trusted) = match header.message_type {
+            MessageType::TrustedHelloAck => {
+                let ack: TrustedHelloAckPayload = protocol::decode_payload(&payload)?;
 
-        let verify: CodeVerifyPayload = protocol::decode_payload(&payload)?;
-        let expected_hmac = crypto::hmac_sha256(&self.session_key, self.code.as_str().as_bytes());
-        let success = crypto::constant_time_eq(&verify.code_hmac, &expected_hmac);
+                if !ack.trusted {
+                    return Err(Error::TrustError(
+                        ack.error.unwrap_or_else(|| "Peer rejected trust".to_string()),
+                    ));
+                }
 
-        let ack = CodeVerifyAckPayload {
-            success,
-            error: if success {
-                None
-            } else {
-                Some("Invalid code".to_string())
-            },
+                let peer_device_id = ack.device_id.ok_or_else(|| {
+                    Error::TrustError("Missing device_id in TrustedHelloAck".to_string())
+                })?;
+                let peer_public_key = ack.public_key.as_ref().ok_or_else(|| {
+                    Error::TrustError("Missing public_key in TrustedHelloAck".to_string())
+                })?;
+
+                let is_trusted_peer = trust_store.is_some_and(|store| {
+                    store.verify_key(&peer_device_id, peer_public_key)
+                });
+
+                if let Some(sig_b64) = &ack.nonce_signature {
+                    let sig_bytes = BASE64_STANDARD
+                        .decode(sig_b64)
+                        .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
+                    let sig_array: [u8; 64] = sig_bytes.try_into().map_err(|_| {
+                        Error::ProtocolError("Invalid signature length".to_string())
+                    })?;
+
+                    if !DeviceIdentity::verify_base64(peer_public_key, &nonce, &sig_array) {
+                        return Err(Error::TrustError("Invalid peer signature".to_string()));
+                    }
+                }
+
+                (
+                    ack.device_name.unwrap_or_else(|| "Unknown".to_string()),
+                    is_trusted_peer,
+                )
+            }
+            MessageType::HelloAck => {
+                let ack: HelloPayload = protocol::decode_payload(&payload)?;
+
+                let is_trusted_peer = if let (Some(device_id), Some(public_key)) =
+                    (&ack.device_id, &ack.public_key)
+                {
+                    trust_store.is_some_and(|store| store.verify_key(device_id, public_key))
+                } else {
+                    false
+                };
+
+                (ack.device_name, is_trusted_peer)
+            }
+            _ => {
+                return Err(Error::UnexpectedMessage {
+                    expected: "TrustedHelloAck or HelloAck".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
         };
-        let ack_payload = protocol::encode_payload(&ack)?;
-        protocol::write_frame(&mut tls_stream, MessageType::CodeVerifyAck, &ack_payload).await?;
 
-        if !success {
-            return Err(Error::CodeNotFound(self.code.to_string()));
+        if is_trusted {
+            tracing::info!("Trusted connection established with {}", peer_name);
+        } else {
+            let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
+            if header.message_type != MessageType::CodeVerify {
+                return Err(Error::UnexpectedMessage {
+                    expected: "CodeVerify".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
+
+            let verify: CodeVerifyPayload = protocol::decode_payload(&payload)?;
+            let expected_hmac =
+                crypto::hmac_sha256(&self.session_key, self.code.as_str().as_bytes());
+            let success = crypto::constant_time_eq(&verify.code_hmac, &expected_hmac);
+
+            let ack = CodeVerifyAckPayload {
+                success,
+                error: if success {
+                    None
+                } else {
+                    Some("Invalid code".to_string())
+                },
+            };
+            let ack_payload = protocol::encode_payload(&ack)?;
+            protocol::write_frame(&mut tls_stream, MessageType::CodeVerifyAck, &ack_payload)
+                .await?;
+
+            if !success {
+                return Err(Error::CodeNotFound(self.code.to_string()));
+            }
         }
 
         let (shutdown_tx, _) = broadcast::channel(1);
 
         let session = ClipboardSyncSession {
-            peer_name: peer_hello.device_name,
+            peer_name,
             peer_addr,
             _device_name: self.device_name,
             last_local_hash: Arc::new(AtomicU64::new(0)),
@@ -987,6 +1241,176 @@ impl ClipboardSyncSession {
     /// Returns an error if connection fails.
     pub async fn connect(code: &str, config: TransferConfig) -> Result<(Self, SyncSessionRunner)> {
         Self::connect_with_options(code, None, config).await
+    }
+
+    /// Connect to a trusted device for clipboard sync (codeless).
+    ///
+    /// Uses TrustedHello handshake with signature verification instead of code.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails or trust verification fails.
+    pub async fn connect_trusted(
+        device: &TrustedDevice,
+        _config: TransferConfig,
+    ) -> Result<(Self, SyncSessionRunner)> {
+        let (ip, port) = device.address().ok_or_else(|| {
+            Error::ConfigError(format!(
+                "Device '{}' has no stored address. Connect with --host first.",
+                device.device_name
+            ))
+        })?;
+        let transfer_addr = SocketAddr::new(ip, port);
+
+        tracing::info!(
+            "Connecting to trusted device '{}' at {}",
+            device.device_name,
+            transfer_addr
+        );
+
+        let device_name = hostname::get().map_or_else(
+            |_| "Unknown".to_string(),
+            |h| h.to_string_lossy().to_string(),
+        );
+
+        let stream = TcpStream::connect(transfer_addr).await?;
+
+        let tls_config = TlsConfig::client()?;
+        let connector = TlsConnector::from(Arc::new(
+            tls_config
+                .client_config()
+                .ok_or_else(|| Error::TlsError("no client config".to_string()))?
+                .clone(),
+        ));
+
+        let mut tls_stream = connector
+            .connect("localhost".try_into().unwrap(), stream)
+            .await
+            .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
+
+        let peer_name =
+            Self::do_trusted_handshake_client(&mut tls_stream, device, &device_name).await?;
+
+        let (shutdown_tx, _) = broadcast::channel(1);
+
+        let session = Self {
+            peer_name,
+            peer_addr: transfer_addr,
+            _device_name: device_name,
+            last_local_hash: Arc::new(AtomicU64::new(0)),
+            last_remote_hash: Arc::new(AtomicU64::new(0)),
+            stats: SyncStats::default(),
+            started_at: Instant::now(),
+            shutdown_tx: shutdown_tx.clone(),
+        };
+
+        let runner = SyncSessionRunner {
+            tls_stream: TlsStreamKind::Client(tls_stream),
+            last_local_hash: Arc::clone(&session.last_local_hash),
+            last_remote_hash: Arc::clone(&session.last_remote_hash),
+            shutdown_rx: shutdown_tx.subscribe(),
+        };
+
+        Ok((session, runner))
+    }
+
+    async fn do_trusted_handshake_client<S>(
+        stream: &mut S,
+        expected_device: &TrustedDevice,
+        our_device_name: &str,
+    ) -> Result<String>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (header, payload) = protocol::read_frame(stream).await?;
+
+        match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = protocol::decode_payload(&payload)?;
+
+                if hello.device_id != expected_device.device_id {
+                    return Err(Error::TrustError(format!(
+                        "Device ID mismatch: expected {}, got {}",
+                        expected_device.device_id, hello.device_id
+                    )));
+                }
+
+                if hello.public_key != expected_device.public_key {
+                    return Err(Error::TrustError(
+                        "Public key mismatch - device may have been reinstalled".to_string(),
+                    ));
+                }
+
+                let nonce_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid nonce: {e}")))?;
+
+                let signature_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce_signature)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
+
+                let sig_array: [u8; 64] = signature_bytes.try_into().map_err(|_| {
+                    Error::ProtocolError("Invalid signature length".to_string())
+                })?;
+
+                if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
+                    return Err(Error::TrustError("Invalid signature".to_string()));
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let response_signature = identity.sign(&nonce_bytes);
+
+                let ack = TrustedHelloAckPayload {
+                    trusted: true,
+                    device_name: Some(our_device_name.to_string()),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    nonce_signature: Some(BASE64_STANDARD.encode(response_signature)),
+                    error: None,
+                    trust_level: Some("Full".to_string()),
+                };
+
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::TrustedHelloAck, &ack_payload).await?;
+
+                Ok(hello.device_name)
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = protocol::decode_payload(&payload)?;
+
+                if let (Some(device_id), Some(public_key)) = (&hello.device_id, &hello.public_key) {
+                    if *device_id != expected_device.device_id {
+                        return Err(Error::TrustError(format!(
+                            "Device ID mismatch: expected {}, got {}",
+                            expected_device.device_id, device_id
+                        )));
+                    }
+
+                    if *public_key != expected_device.public_key {
+                        return Err(Error::TrustError(
+                            "Public key mismatch - device may have been reinstalled".to_string(),
+                        ));
+                    }
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let ack = HelloPayload {
+                    device_name: our_device_name.to_string(),
+                    protocol_version: "1.0".to_string(),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = protocol::encode_payload(&ack)?;
+                protocol::write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
+
+                Ok(hello.device_name)
+            }
+            _ => Err(Error::UnexpectedMessage {
+                expected: "TrustedHello or Hello".to_string(),
+                actual: format!("{:?}", header.message_type),
+            }),
+        }
     }
 
     /// Connect to a sync host with optional direct address.
