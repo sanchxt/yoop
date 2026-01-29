@@ -68,6 +68,43 @@ yoop clipboard sync A7K9           # Join sync session
 
 Supports text and images. Changes sync automatically across devices!
 
+### VPN & Overlay Network Support
+
+Yoop works seamlessly over VPN overlay networks (Tailscale, WireGuard, ZeroTier, Headscale) where UDP broadcast and mDNS discovery don't work:
+
+```bash
+# Direct connection using IP address
+yoop clipboard sync --host 100.103.164.32 A7K9
+
+# Connect to trusted device (codeless, uses stored IP)
+yoop clipboard sync --device "My-Mac"
+
+# First-time pairing over VPN
+# Device A:
+yoop clipboard sync
+# → Code: A7K9
+
+# Device B:
+yoop clipboard sync --host 100.103.164.32 A7K9
+# After successful connection, Device B is trusted
+
+# Subsequent connections (automatic):
+yoop clipboard sync --device "Device-A"
+```
+
+**How it works:**
+
+1. **First connection**: Use `--host IP[:PORT]` with a share code
+2. **Trusted pairing**: After connection, devices are added to trust store with stored IP
+3. **Future connections**: Use `--device <name>` for codeless connections
+4. **Auto-fallback**: If discovery fails, automatically tries stored IP addresses
+
+**Supported on all commands:**
+- `yoop receive --host IP CODE`
+- `yoop clipboard receive --device "Device-Name"`
+- `yoop clipboard sync --host IP CODE`
+- `yoop sync --device "Device-Name" ./folder`
+
 ### Directory Sync
 
 ```bash
@@ -136,12 +173,18 @@ Supported: Bash, Zsh, Fish, PowerShell, Elvish
 
 1. **Sender** shares files and gets a 4-character code (e.g., `A 7 K 9`)
 2. **Receiver** enters the code on their device
-3. **Discovery** happens via UDP broadcast + mDNS on local network
+3. **Discovery** happens via UDP broadcast + mDNS on local network (or direct IP with `--host`)
 4. **Transfer** occurs directly over TLS 1.3 encrypted TCP connection
 5. **Verification** using xxHash64 per chunk, SHA-256 for complete file
 6. **Resume** automatic resumption of interrupted transfers from last checkpoint
 
 **For trusted devices:** Direct connection using Ed25519 signatures (no code needed)
+
+**Connection methods:**
+- **Discovery**: UDP broadcast + mDNS for local networks
+- **Direct IP**: `--host IP[:PORT]` for VPN/overlay networks
+- **Trusted devices**: `--device <name>` for codeless connections with stored addresses
+- **Auto-fallback**: Tries stored IP addresses when discovery fails
 
 ```
 ┌─────────────┐           UDP Broadcast            ┌──────────────┐
@@ -214,6 +257,13 @@ yoop share file.txt
 # Subsequent transfers: Direct send (no code needed)
 yoop send "Device-Name" file.txt
 
+# Connect to trusted device for clipboard/sync (codeless)
+yoop clipboard sync --device "Device-Name"
+yoop clipboard receive --device "Device-Name"
+
+# Direct IP connection (saves address for future use)
+yoop clipboard sync --host 192.168.1.100 A7K9
+
 # Manage trusted devices
 yoop trust list                    # List all trusted devices
 yoop trust set "Name" --level full # Set trust level
@@ -221,6 +271,8 @@ yoop trust remove "Name"           # Remove device
 ```
 
 **Security:** Uses Ed25519 signatures for authentication. No MITM attacks possible.
+
+**VPN Support:** Stored IP addresses enable seamless connections over Tailscale, WireGuard, and other overlay networks where discovery doesn't work.
 
 ## Directory Sync
 
