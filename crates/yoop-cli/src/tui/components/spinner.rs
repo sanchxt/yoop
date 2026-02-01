@@ -94,8 +94,8 @@ pub struct Spinner<'a> {
     style: SpinnerStyle,
     /// Text style
     text_style: Style,
-    /// Spinner style (color)
-    spinner_style: Style,
+    /// Spinner icon style (color)
+    icon_style: Style,
 }
 
 impl<'a> Spinner<'a> {
@@ -105,7 +105,7 @@ impl<'a> Spinner<'a> {
             text,
             style: SpinnerStyle::default(),
             text_style: Style::default(),
-            spinner_style: Style::default(),
+            icon_style: Style::default(),
         }
     }
 
@@ -125,8 +125,8 @@ impl<'a> Spinner<'a> {
 
     /// Set the spinner character style.
     #[must_use]
-    pub const fn spinner_style(mut self, style: Style) -> Self {
-        self.spinner_style = style;
+    pub const fn icon_style(mut self, style: Style) -> Self {
+        self.icon_style = style;
         self
     }
 
@@ -134,7 +134,7 @@ impl<'a> Spinner<'a> {
     pub fn render(&self, frame: &mut Frame, area: Rect, state: &SpinnerState) {
         let spinner_char = state.current_frame(self.style);
         let line = Line::from(vec![
-            Span::styled(spinner_char, self.spinner_style),
+            Span::styled(spinner_char, self.icon_style),
             Span::raw(" "),
             Span::styled(self.text, self.text_style),
         ]);
