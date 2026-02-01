@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0](https://github.com/sanchxt/yoop/compare/v0.1.6...v0.2.0) (2026-02-01)
+
+
+### ⚠ BREAKING CHANGES
+
+* New TUI dependencies (ratatui, crossterm) are required. The CLI interface remains fully backward compatible, but the new interactive mode represents a significant shift in how users can interact with Yoop.
+
+### Features
+
+* add TUI mode and direct peer connections ([#23](https://github.com/sanchxt/yoop/issues/23)) ([6fafe36](https://github.com/sanchxt/yoop/commit/6fafe3615251bf6223a96e9619bfc705852351c0))
+
+
+### Bug Fixes
+
+* **transfer:** persist and prioritize peer addresses in trusted connections ([a22a763](https://github.com/sanchxt/yoop/commit/a22a7635ada11dd52a775132cc74dbcf8a8f110a))
+
 ## [0.1.6](https://github.com/sanchxt/yoop/compare/v0.1.5...v0.1.6) (2026-01-23)
 
 

@@ -1,6 +1,6 @@
 {
   "name": "@sanchxt/yoop-linux-x64-musl",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Yoop binary for Linux x64 (musl/Alpine)",
   "os": [
     "linux"

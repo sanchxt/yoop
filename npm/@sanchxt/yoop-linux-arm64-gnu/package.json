@@ -1,6 +1,6 @@
 {
   "name": "@sanchxt/yoop-linux-arm64-gnu",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Yoop binary for Linux ARM64 (glibc)",
   "os": [
     "linux"
