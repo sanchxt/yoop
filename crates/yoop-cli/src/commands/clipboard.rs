@@ -17,6 +17,7 @@ use yoop_core::transfer::TransferConfig;
 use yoop_core::trust::TrustStore;
 
 use super::{ClipboardAction, ClipboardArgs};
+use crate::tui::session::{ClipboardSyncEntry, SessionStateFile};
 use crate::ui::{format_remaining, CodeBox};
 
 /// Create a TransferConfig using global config values.
@@ -618,7 +619,20 @@ async fn run_sync_session(
         println!();
     }
 
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.set_clipboard_sync(Some(ClipboardSyncEntry {
+        peer_name: session.peer_name().to_string(),
+        peer_address: session.peer_addr().to_string(),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        items_sent: 0,
+        items_received: 0,
+    }));
+
     let result = runner.run().await;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.set_clipboard_sync(None);
 
     match result {
         Ok((stats, mut event_rx)) => {

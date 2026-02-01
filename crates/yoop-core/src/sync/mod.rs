@@ -41,7 +41,7 @@ pub use conflict::{
     Conflict, ConflictDetector, ConflictResolution, ConflictVersion, ResolutionStrategy,
 };
 pub use engine::{SyncEngine, SyncPlan};
-pub use session::{SyncEvent, SyncSession};
+pub use session::{SyncEvent, SyncHostSession, SyncSession};
 
 /// Configuration for a sync session.
 #[derive(Debug, Clone)]

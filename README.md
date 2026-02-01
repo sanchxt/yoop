@@ -222,9 +222,49 @@ yoop diagnose                      # Network diagnostics
 # Configuration & Utilities
 yoop config                        # Manage configuration
 yoop history                       # View transfer history
+yoop tui                           # Launch interactive TUI dashboard
 yoop web                           # Start web interface
 yoop completions install           # Install shell completions
 ```
+
+## TUI Mode
+
+Launch a full-featured terminal dashboard for managing all Yoop features:
+
+```bash
+# Launch TUI dashboard
+yoop tui
+
+# Launch directly to a specific view
+yoop tui --view share
+yoop tui --view receive
+yoop tui --view clipboard
+yoop tui --view devices
+```
+
+**Features:**
+
+- **Dashboard view**: All features accessible from a single interface
+- **Vim-style navigation**: `j/k` to move, `h/l` to navigate, `Space` to select
+- **Multiple views**: Share, Receive, Clipboard, Sync, Devices, History, Config
+- **Responsive layout**: Adapts to terminal size (split panels, tabs, or minimal)
+- **Real-time monitoring**: See active transfers and clipboard sync status
+- **File browser**: Built-in file browser with multi-select support
+- **Help overlay**: Press `?` for keybinding reference
+
+**Key navigation:**
+
+| Key | Action |
+|-----|--------|
+| `S/R/C/Y/D/H/G` | Switch views (Share/Receive/Clipboard/sYnc/Devices/History/confiG) |
+| `j/k` or arrows | Navigate up/down |
+| `Tab` | Cycle focus |
+| `Enter` | Confirm/Start |
+| `Space` | Toggle selection |
+| `?` | Show help |
+| `Q` | Quit |
+
+The TUI provides the same functionality as the CLI commands but with an interactive interface - perfect for users who prefer visual navigation over memorizing commands.
 
 ## Web Interface
 

@@ -34,6 +34,7 @@ use tokio_rustls::{TlsAcceptor, TlsConnector};
 use uuid::Uuid;
 
 use crate::code::{CodeGenerator, ShareCode};
+use crate::compression::CompressionAlgorithm;
 use crate::crypto::{self, TlsConfig};
 use crate::discovery::{
     DiscoveryPacket, HybridBroadcaster, HybridListener, DEFAULT_DISCOVERY_PORT,
@@ -237,6 +238,8 @@ pub struct ShareSession {
     receiver_public_key: Option<String>,
     /// Receiver's device name (captured after transfer)
     receiver_name: Option<String>,
+    /// Negotiated compression algorithm (None = no compression)
+    negotiated_compression: Option<CompressionAlgorithm>,
 }
 
 impl std::fmt::Debug for ShareSession {
@@ -339,6 +342,7 @@ impl ShareSession {
             receiver_device_id: None,
             receiver_public_key: None,
             receiver_name: None,
+            negotiated_compression: None,
         })
     }
 
@@ -404,12 +408,18 @@ impl ShareSession {
 
         self.update_state(TransferState::Connected);
 
-        let (receiver_name, receiver_device_id, receiver_public_key, _receiver_compression) =
+        let (receiver_name, receiver_device_id, receiver_public_key, receiver_compression) =
             self.do_handshake(&mut tls_stream).await?;
         self.receiver_name = Some(receiver_name);
         self.receiver_device_id = receiver_device_id;
         self.receiver_public_key = receiver_public_key;
-        // TODO: use receiver_compression for compression negotiation
+
+        self.negotiated_compression = match (self.compression_capabilities(), receiver_compression)
+        {
+            (Some(our_caps), Some(their_caps)) => our_caps.negotiate(&their_caps),
+            _ => None,
+        };
+        tracing::debug!("Negotiated compression: {:?}", self.negotiated_compression);
 
         self.do_code_verification(&mut tls_stream).await?;
 
@@ -567,7 +577,12 @@ impl ShareSession {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        use crate::compression::{
+            should_compress_file, CompressionAlgorithm, CompressionDecision, CompressionMode,
+        };
+
         let chunker = FileChunker::new(self.config.chunk_size);
+        let compression_level = i32::from(self.config.compression_level);
 
         for (file_index, file) in self.files.iter().enumerate() {
             {
@@ -650,6 +665,31 @@ impl ShareSession {
                 continue;
             }
 
+            let compression_decision = should_compress_file(&file_path, self.config.compression);
+            let file_should_compress = if self.negotiated_compression.is_none()
+                || self.config.compression == CompressionMode::Never
+            {
+                false
+            } else {
+                match compression_decision {
+                    CompressionDecision::Compress => true,
+                    CompressionDecision::Skip => false,
+                    CompressionDecision::TestFirstChunk => {
+                        chunks.first().is_some_and(|first_chunk| {
+                            crate::compression::should_compress(&first_chunk.data, 0.95)
+                        })
+                    }
+                }
+            };
+
+            tracing::debug!(
+                "File {} compression: negotiated={:?}, decision={:?}, will_compress={}",
+                file.file_name(),
+                self.negotiated_compression,
+                compression_decision,
+                file_should_compress
+            );
+
             for chunk in chunks {
                 let start = ChunkStartPayload {
                     file_index,
@@ -659,13 +699,35 @@ impl ShareSession {
                 let start_payload = protocol::encode_payload(&start)?;
                 protocol::write_frame(stream, MessageType::ChunkStart, &start_payload).await?;
 
+                #[allow(clippy::cast_possible_truncation)]
+                let (wire_data, compression_algo, original_size) = if file_should_compress {
+                    match crate::compression::compress(&chunk.data, compression_level) {
+                        Ok(compressed) => {
+                            if compressed.len() < chunk.data.len() {
+                                let orig_len = chunk.data.len() as u32;
+                                (compressed, CompressionAlgorithm::Zstd, Some(orig_len))
+                            } else {
+                                (chunk.data.clone(), CompressionAlgorithm::None, None)
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Compression failed, sending uncompressed: {}", e);
+                            (chunk.data.clone(), CompressionAlgorithm::None, None)
+                        }
+                    }
+                } else {
+                    (chunk.data.clone(), CompressionAlgorithm::None, None)
+                };
+
+                let wire_checksum = xxhash_rust::xxh64::xxh64(&wire_data, 0);
+
                 let data = ChunkDataPayload {
                     file_index,
                     chunk_index: chunk.chunk_index,
-                    data: chunk.data.clone(),
-                    checksum: chunk.checksum,
-                    compression: crate::compression::CompressionAlgorithm::None,
-                    original_size: None,
+                    data: wire_data,
+                    checksum: wire_checksum,
+                    compression: compression_algo,
+                    original_size,
                 };
                 let data_payload = protocol::encode_chunk_data(&data);
                 protocol::write_frame(stream, MessageType::ChunkData, &data_payload).await?;
@@ -1441,13 +1503,57 @@ impl ReceiveSession {
                     }
                 }
                 MessageType::ChunkData => {
+                    use crate::compression::CompressionAlgorithm;
+
                     let chunk_data = protocol::decode_chunk_data(&payload)?;
+
+                    let wire_checksum = xxhash_rust::xxh64::xxh64(&chunk_data.data, 0);
+                    if wire_checksum != chunk_data.checksum {
+                        let ack = ChunkAckPayload {
+                            file_index: chunk_data.file_index,
+                            chunk_index: chunk_data.chunk_index,
+                            success: false,
+                        };
+                        let ack_payload = protocol::encode_payload(&ack)?;
+                        protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+                        return Err(Error::ChecksumMismatch {
+                            file: self.files[chunk_data.file_index].file_name().to_string(),
+                            chunk: chunk_data.chunk_index,
+                        });
+                    }
+
+                    let decompressed_data = match chunk_data.compression {
+                        CompressionAlgorithm::Zstd => {
+                            match crate::compression::decompress(&chunk_data.data) {
+                                Ok(data) => data,
+                                Err(e) => {
+                                    tracing::error!("Decompression failed: {}", e);
+                                    let ack = ChunkAckPayload {
+                                        file_index: chunk_data.file_index,
+                                        chunk_index: chunk_data.chunk_index,
+                                        success: false,
+                                    };
+                                    let ack_payload = protocol::encode_payload(&ack)?;
+                                    protocol::write_frame(
+                                        stream,
+                                        MessageType::ChunkAck,
+                                        &ack_payload,
+                                    )
+                                    .await?;
+                                    return Err(e);
+                                }
+                            }
+                        }
+                        CompressionAlgorithm::None => chunk_data.data.clone(),
+                    };
+
+                    let decompressed_checksum = xxhash_rust::xxh64::xxh64(&decompressed_data, 0);
 
                     let chunk = FileChunk {
                         file_index: chunk_data.file_index,
                         chunk_index: chunk_data.chunk_index,
-                        data: chunk_data.data.clone(),
-                        checksum: chunk_data.checksum,
+                        data: decompressed_data.clone(),
+                        checksum: decompressed_checksum,
                         is_last: false,
                     };
 
@@ -1476,8 +1582,8 @@ impl ReceiveSession {
 
                     {
                         let mut progress = self.progress_rx.borrow().clone();
-                        progress.file_bytes_transferred += chunk_data.data.len() as u64;
-                        progress.total_bytes_transferred += chunk_data.data.len() as u64;
+                        progress.file_bytes_transferred += decompressed_data.len() as u64;
+                        progress.total_bytes_transferred += decompressed_data.len() as u64;
                         let elapsed = progress.started_at.elapsed().as_secs_f64();
                         if elapsed > 0.0 {
                             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
@@ -1868,13 +1974,50 @@ impl ReceiveSession {
     where
         S: AsyncRead + AsyncWrite + Unpin,
     {
+        use crate::compression::CompressionAlgorithm;
+
         let chunk_data = protocol::decode_chunk_data(payload)?;
+
+        let wire_checksum = xxhash_rust::xxh64::xxh64(&chunk_data.data, 0);
+        if wire_checksum != chunk_data.checksum {
+            let ack = ChunkAckPayload {
+                file_index: chunk_data.file_index,
+                chunk_index: chunk_data.chunk_index,
+                success: false,
+            };
+            let ack_payload = protocol::encode_payload(&ack)?;
+            protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+            return Err(Error::ChecksumMismatch {
+                file: self.files[chunk_data.file_index].file_name().to_string(),
+                chunk: chunk_data.chunk_index,
+            });
+        }
+
+        let decompressed_data = match chunk_data.compression {
+            CompressionAlgorithm::Zstd => match crate::compression::decompress(&chunk_data.data) {
+                Ok(data) => data,
+                Err(e) => {
+                    tracing::error!("Decompression failed: {}", e);
+                    let ack = ChunkAckPayload {
+                        file_index: chunk_data.file_index,
+                        chunk_index: chunk_data.chunk_index,
+                        success: false,
+                    };
+                    let ack_payload = protocol::encode_payload(&ack)?;
+                    protocol::write_frame(stream, MessageType::ChunkAck, &ack_payload).await?;
+                    return Err(e);
+                }
+            },
+            CompressionAlgorithm::None => chunk_data.data.clone(),
+        };
+
+        let decompressed_checksum = xxhash_rust::xxh64::xxh64(&decompressed_data, 0);
 
         let chunk = FileChunk {
             file_index: chunk_data.file_index,
             chunk_index: chunk_data.chunk_index,
-            data: chunk_data.data.clone(),
-            checksum: chunk_data.checksum,
+            data: decompressed_data.clone(),
+            checksum: decompressed_checksum,
             is_last: false,
         };
 
@@ -1900,8 +2043,8 @@ impl ReceiveSession {
         }
 
         let mut progress = self.progress_rx.borrow().clone();
-        progress.file_bytes_transferred += chunk_data.data.len() as u64;
-        progress.total_bytes_transferred += chunk_data.data.len() as u64;
+        progress.file_bytes_transferred += decompressed_data.len() as u64;
+        progress.total_bytes_transferred += decompressed_data.len() as u64;
         let elapsed = progress.started_at.elapsed().as_secs_f64();
         if elapsed > 0.0 {
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]

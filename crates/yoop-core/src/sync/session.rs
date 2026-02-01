@@ -105,6 +105,77 @@ pub enum SyncEvent {
     },
 }
 
+/// A pending sync host session waiting for peer connection.
+///
+/// This struct represents the first phase of hosting a sync session.
+/// It contains the share code and all resources needed to accept a connection,
+/// but doesn't block waiting for a peer. This allows the UI to display the
+/// code immediately while waiting for a connection in the background.
+pub struct SyncHostSession {
+    code: ShareCode,
+    config: SyncConfig,
+    transfer_config: TransferConfig,
+    local_index: FileIndex,
+    session_key: [u8; 32],
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+    broadcaster: HybridBroadcaster,
+    device_name: String,
+}
+
+impl SyncHostSession {
+    /// Get the share code for this session.
+    #[must_use]
+    pub fn code(&self) -> &ShareCode {
+        &self.code
+    }
+
+    /// Wait for a peer to connect and complete the handshake.
+    ///
+    /// This method blocks until a peer connects, then performs the TLS
+    /// handshake and protocol negotiation. Returns a fully-connected
+    /// `SyncSession` ready for synchronization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or the handshake fails.
+    pub async fn wait_for_connection(self) -> Result<SyncSession> {
+        let local_addr = self.listener.local_addr()?;
+        tracing::info!("Waiting for connection on {}", local_addr);
+
+        let (tcp_stream, peer_addr) = self.listener.accept().await?;
+        tracing::info!("Connection from {}", peer_addr);
+
+        configure_tcp_keepalive(&tcp_stream)?;
+
+        let mut tls_stream = self.acceptor.accept(tcp_stream).await?;
+
+        self.broadcaster.stop().await;
+
+        let (peer_name, remote_index) = SyncSession::handshake_host(
+            &mut tls_stream,
+            &self.device_name,
+            &self.session_key,
+            &self.local_index,
+            &self.config,
+        )
+        .await?;
+
+        Ok(SyncSession {
+            config: self.config,
+            transfer_config: self.transfer_config,
+            local_index: self.local_index,
+            remote_index,
+            peer_name: Some(peer_name),
+            stats: SyncStats::new(),
+            sync_engine: SyncEngine::new(ResolutionStrategy::default()),
+            op_id_counter: 0,
+            tls_stream: Some(tokio_rustls::TlsStream::Server(tls_stream)),
+            session_start: Instant::now(),
+        })
+    }
+}
+
 /// A bidirectional sync session.
 pub struct SyncSession {
     config: SyncConfig,
@@ -132,15 +203,29 @@ impl std::fmt::Debug for SyncSession {
 }
 
 impl SyncSession {
-    /// Host a new sync session (waits for connection).
+    /// Start hosting a sync session (returns immediately with code).
+    ///
+    /// This is the first phase of hosting a sync session. It sets up the
+    /// listener, starts broadcasting, and returns immediately with a
+    /// `SyncHostSession` that contains the share code. Call
+    /// `wait_for_connection()` on the returned session to wait for a peer.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let host_session = SyncSession::host_start(config, transfer_config).await?;
+    /// println!("Share this code: {}", host_session.code());
+    /// let session = host_session.wait_for_connection().await?;
+    /// session.run(|event| println!("{:?}", event)).await?;
+    /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the session cannot be created or the connection fails.
-    pub async fn host(
+    /// Returns an error if the session cannot be created.
+    pub async fn host_start(
         config: SyncConfig,
         transfer_config: TransferConfig,
-    ) -> Result<(ShareCode, Self)> {
+    ) -> Result<SyncHostSession> {
         let code = CodeGenerator::new().generate()?;
         tracing::info!("Hosting sync session with code: {}", code);
 
@@ -181,41 +266,38 @@ impl SyncSession {
             .start(packet, transfer_config.broadcast_interval)
             .await?;
 
-        tracing::info!("Waiting for connection on {}", local_addr);
+        tracing::info!("Sync session ready with code: {}", code);
 
-        let (tcp_stream, peer_addr) = listener.accept().await?;
-        tracing::info!("Connection from {}", peer_addr);
-
-        configure_tcp_keepalive(&tcp_stream)?;
-
-        let mut tls_stream = acceptor.accept(tcp_stream).await?;
-
-        broadcaster.stop().await;
-
-        let (peer_name, remote_index) = Self::handshake_host(
-            &mut tls_stream,
-            &device_name,
-            &session_key,
-            &local_index,
-            &config,
-        )
-        .await?;
-
-        Ok((
+        Ok(SyncHostSession {
             code,
-            Self {
-                config,
-                transfer_config,
-                local_index,
-                remote_index,
-                peer_name: Some(peer_name),
-                stats: SyncStats::new(),
-                sync_engine: SyncEngine::new(ResolutionStrategy::default()),
-                op_id_counter: 0,
-                tls_stream: Some(tokio_rustls::TlsStream::Server(tls_stream)),
-                session_start: Instant::now(),
-            },
-        ))
+            config,
+            transfer_config,
+            local_index,
+            session_key,
+            listener,
+            acceptor,
+            broadcaster,
+            device_name,
+        })
+    }
+
+    /// Host a new sync session (waits for connection).
+    ///
+    /// This is a convenience method that combines `host_start()` and
+    /// `wait_for_connection()`. Use `host_start()` instead if you need
+    /// to display the code before waiting for a connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session cannot be created or the connection fails.
+    pub async fn host(
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<(ShareCode, Self)> {
+        let host_session = Self::host_start(config, transfer_config).await?;
+        let code = host_session.code().clone();
+        let session = host_session.wait_for_connection().await?;
+        Ok((code, session))
     }
 
     /// Connect to a sync session using a code.

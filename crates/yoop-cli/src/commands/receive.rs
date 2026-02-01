@@ -22,6 +22,7 @@ use yoop_core::transfer::{ReceiveSession, TransferConfig, TransferProgress, Tran
 use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::ReceiveArgs;
+use crate::tui::session::{FileEntry, PeerEntry, ProgressEntry, SessionEntry, SessionStateFile};
 
 /// Run the receive command.
 #[allow(clippy::too_many_lines)]
@@ -205,15 +206,51 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
     let progress_rx = session.progress();
     let start_time = Instant::now();
 
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "receive".to_string(),
+        code: Some(code_for_history.clone()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: files
+            .iter()
+            .map(|f| FileEntry {
+                name: f.file_name().to_string(),
+                size: f.size,
+                transferred: 0,
+                status: "pending".to_string(),
+            })
+            .collect(),
+        peer: Some(PeerEntry {
+            name: sender_name.clone(),
+            address: sender_addr.to_string(),
+        }),
+        progress: ProgressEntry::default(),
+    };
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
+
     let quiet = args.quiet;
     let json = args.json;
     let progress_handle = if !quiet && !json {
-        Some(tokio::spawn(display_progress(progress_rx)))
+        Some(tokio::spawn(display_progress(
+            progress_rx.clone(),
+            session_id,
+        )))
     } else {
-        None
+        Some(tokio::spawn(update_session_state(
+            progress_rx.clone(),
+            session_id,
+        )))
     };
 
     let result = session.accept().await;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if let Some(handle) = progress_handle {
         let _ = handle.await;
@@ -232,6 +269,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 &output_dir,
                 HistoryState::Completed,
                 None,
+                sender_device_id,
             );
 
             if let Some(device_id) = sender_device_id {
@@ -281,6 +319,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 &output_dir,
                 HistoryState::Failed,
                 Some(e.to_string()),
+                sender_device_id,
             );
 
             if !args.quiet && !args.json {
@@ -304,6 +343,7 @@ fn record_history(
     output_dir: &std::path::Path,
     state: HistoryState,
     error: Option<String>,
+    sender_device_id: Option<Uuid>,
 ) {
     let history_files: Vec<HistoryFileEntry> = files
         .iter()
@@ -323,6 +363,10 @@ fn record_history(
     .with_stats(total_bytes, duration_secs)
     .with_state(state)
     .with_output_dir(output_dir.to_path_buf());
+
+    if let Some(device_id) = sender_device_id {
+        entry = entry.with_device_id(device_id);
+    }
 
     if let Some(err_msg) = error {
         entry = entry.with_error(err_msg);
@@ -395,8 +439,9 @@ fn format_preview_info(file: &FileMetadata) -> String {
     }
 }
 
-async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
+async fn display_progress(mut rx: watch::Receiver<TransferProgress>, session_id: Uuid) {
     let mut last_state = TransferState::Preparing;
+    let mut last_update = Instant::now();
 
     loop {
         if rx.changed().await.is_err() {
@@ -404,6 +449,11 @@ async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
         }
 
         let progress = rx.borrow().clone();
+
+        if last_update.elapsed() >= std::time::Duration::from_millis(500) {
+            update_session_state_once(&progress, session_id);
+            last_update = Instant::now();
+        }
 
         if progress.state != last_state {
             last_state = progress.state;
@@ -443,6 +493,46 @@ async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
     }
 
     println!();
+}
+
+/// Update session state in the background.
+async fn update_session_state(mut rx: watch::Receiver<TransferProgress>, session_id: Uuid) {
+    let mut last_update = Instant::now();
+
+    loop {
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(1), rx.changed()).await;
+        let progress = rx.borrow().clone();
+
+        if last_update.elapsed() >= std::time::Duration::from_millis(500) {
+            update_session_state_once(&progress, session_id);
+            last_update = Instant::now();
+        }
+
+        match progress.state {
+            TransferState::Completed | TransferState::Cancelled | TransferState::Failed => break,
+            _ => {}
+        }
+
+        if timeout.is_err() {
+            continue;
+        }
+        if timeout.unwrap().is_err() {
+            break;
+        }
+    }
+}
+
+/// Update session state file once with current progress.
+fn update_session_state_once(progress: &TransferProgress, session_id: Uuid) {
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.update_session_progress(
+        session_id,
+        ProgressEntry {
+            transferred: progress.total_bytes_transferred,
+            total: progress.total_bytes,
+            speed_bps: progress.speed_bps,
+        },
+    );
 }
 
 /// Prompt the user to trust the sender device after a successful transfer.

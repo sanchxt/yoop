@@ -66,6 +66,7 @@ pub mod send;
 pub mod share;
 pub mod sync;
 pub mod trust;
+pub mod tui;
 #[cfg(feature = "update")]
 pub mod update;
 pub mod web;
@@ -123,6 +124,9 @@ pub enum Command {
     /// Check for and install updates
     #[cfg(feature = "update")]
     Update(UpdateArgs),
+
+    /// Launch terminal user interface
+    Tui(tui::TuiArgs),
 
     /// Internal: hold clipboard content (not user-facing, used by spawn)
     #[command(hide = true)]

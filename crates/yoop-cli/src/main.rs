@@ -22,15 +22,18 @@ use anyhow::Result;
 use clap::Parser;
 
 mod commands;
+pub mod tui;
 pub mod ui;
 
 use commands::{Cli, Command};
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    init_logging();
-
     let cli = Cli::parse();
+
+    if !matches!(cli.command, Command::Tui(_)) {
+        init_logging();
+    }
 
     match cli.command {
         Command::Share(args) => commands::share::run(args).await,
@@ -47,6 +50,7 @@ async fn main() -> Result<()> {
         Command::Completions(args) => commands::completions::run(args.action),
         #[cfg(feature = "update")]
         Command::Update(args) => commands::update::run(args).await,
+        Command::Tui(args) => commands::tui::run(args).await,
         Command::InternalClipboardHold(args) => {
             commands::internal::run_clipboard_hold(&args.content_type, args.timeout)
         }

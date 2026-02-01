@@ -156,7 +156,7 @@ mod tests {
             "song.mp3",
             "archive.zip",
             "document.pdf",
-            "image.PNG", // Test case insensitivity
+            "image.PNG", // case insensitivity
         ];
 
         for file in incompressible_files {
@@ -199,13 +199,11 @@ mod tests {
 
     #[test]
     fn test_incompressible_extensions_list() {
-        // Verify common formats are covered
         assert!(is_incompressible_extension("jpg"));
         assert!(is_incompressible_extension("mp4"));
         assert!(is_incompressible_extension("zip"));
         assert!(is_incompressible_extension("pdf"));
 
-        // Verify text formats are NOT in the list
         assert!(!is_incompressible_extension("txt"));
         assert!(!is_incompressible_extension("json"));
         assert!(!is_incompressible_extension("xml"));

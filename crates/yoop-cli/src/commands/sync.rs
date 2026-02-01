@@ -3,12 +3,15 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use uuid::Uuid;
+
 use yoop_core::connection::parse_host_address;
 use yoop_core::sync::{SyncConfig, SyncEvent, SyncSession};
 use yoop_core::transfer::TransferConfig;
 use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::load_config;
+use crate::tui::session::{FileEntry, PeerEntry, ProgressEntry, SessionEntry, SessionStateFile};
 
 /// Arguments for the sync command
 #[derive(clap::Parser)]
@@ -181,7 +184,8 @@ async fn run_host(
         println!();
     }
 
-    let (code, mut session) = SyncSession::host(config.clone(), transfer_config).await?;
+    let host_session = SyncSession::host_start(config.clone(), transfer_config).await?;
+    let code = host_session.code().to_string();
 
     if !args.quiet {
         println!("  ┌─────────────────────────────────────┐");
@@ -194,6 +198,33 @@ async fn run_host(
         println!();
     }
 
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(code.clone()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: None,
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
+
+    let mut session = host_session.wait_for_connection().await?;
+
+    if !args.quiet {
+        println!("  ✓ Connected to: {}", session.peer_name());
+        println!();
+    }
+
     let quiet = args.quiet;
     let json = args.json;
     let stats = session
@@ -201,6 +232,9 @@ async fn run_host(
             print_event(&event, quiet, json);
         })
         .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if !args.quiet {
         println!();
@@ -227,13 +261,37 @@ async fn run_client(
     }
 
     let mut session =
-        SyncSession::connect_with_options(code, direct_addr, config, transfer_config).await?;
+        SyncSession::connect_with_options(code, direct_addr, config.clone(), transfer_config)
+            .await?;
 
     if !args.quiet {
         println!("  ✓ Connected to: {}", session.peer_name());
         println!("  Sync active (Ctrl+C to stop)");
         println!();
     }
+
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(code.to_string()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: Some(PeerEntry {
+            name: session.peer_name().to_string(),
+            address: String::new(),
+        }),
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
 
     let quiet = args.quiet;
     let json = args.json;
@@ -242,6 +300,9 @@ async fn run_client(
             print_event(&event, quiet, json);
         })
         .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if !args.quiet {
         println!();
@@ -273,13 +334,37 @@ async fn run_trusted_client(
         println!();
     }
 
-    let mut session = SyncSession::connect_trusted(&device, config, transfer_config).await?;
+    let mut session =
+        SyncSession::connect_trusted(&device, config.clone(), transfer_config).await?;
 
     if !args.quiet {
         println!("  ✓ Connected to: {}", session.peer_name());
         println!("  Sync active (Ctrl+C to stop)");
         println!();
     }
+
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(format!("trusted:{}", device.device_name)),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: Some(PeerEntry {
+            name: session.peer_name().to_string(),
+            address: format!("{}:{}", ip, port),
+        }),
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
 
     let quiet = args.quiet;
     let json = args.json;
@@ -288,6 +373,9 @@ async fn run_trusted_client(
             print_event(&event, quiet, json);
         })
         .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if !args.quiet {
         println!();
