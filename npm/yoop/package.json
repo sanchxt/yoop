@@ -1,6 +1,6 @@
 {
   "name": "yoop",
-  "version": "0.1.6",
+  "version": "0.2.0",
   "description": "Cross-platform local network file sharing - transfer files between devices on the same network using simple codes",
   "bin": {
     "yoop": "bin.js"
@@ -33,11 +33,11 @@
     "node": ">=16"
   },
   "optionalDependencies": {
-    "@sanchxt/yoop-linux-x64-gnu": "0.1.6",
-    "@sanchxt/yoop-linux-x64-musl": "0.1.6",
-    "@sanchxt/yoop-linux-arm64-gnu": "0.1.6",
-    "@sanchxt/yoop-darwin-x64": "0.1.6",
-    "@sanchxt/yoop-darwin-arm64": "0.1.6",
-    "@sanchxt/yoop-win32-x64-msvc": "0.1.6"
+    "@sanchxt/yoop-linux-x64-gnu": "0.2.0",
+    "@sanchxt/yoop-linux-x64-musl": "0.2.0",
+    "@sanchxt/yoop-linux-arm64-gnu": "0.2.0",
+    "@sanchxt/yoop-darwin-x64": "0.2.0",
+    "@sanchxt/yoop-darwin-arm64": "0.2.0",
+    "@sanchxt/yoop-win32-x64-msvc": "0.2.0"
   }
 }
