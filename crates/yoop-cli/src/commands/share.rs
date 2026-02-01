@@ -1,6 +1,7 @@
 //! Share command implementation.
 
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::time::Instant;
 
 use anyhow::Result;
@@ -122,6 +123,7 @@ pub async fn run(args: ShareArgs) -> Result<()> {
     let receiver_name = session.receiver_name().map(String::from);
     let receiver_device_id = session.receiver_device_id();
     let receiver_public_key = session.receiver_public_key().map(String::from);
+    let receiver_addr = session.receiver_addr();
 
     handle_transfer_result(
         result,
@@ -133,6 +135,7 @@ pub async fn run(args: ShareArgs) -> Result<()> {
         receiver_name.as_deref(),
         receiver_device_id,
         receiver_public_key.as_deref(),
+        receiver_addr,
         global_config.trust.auto_prompt,
     )
     .await
@@ -196,6 +199,7 @@ async fn handle_transfer_result(
     receiver_name: Option<&str>,
     receiver_device_id: Option<Uuid>,
     receiver_public_key: Option<&str>,
+    receiver_addr: Option<SocketAddr>,
     trust_auto_prompt: bool,
 ) -> Result<()> {
     match result {
@@ -218,7 +222,13 @@ async fn handle_transfer_result(
 
                 if trust_auto_prompt {
                     if let Some(name) = receiver_name {
-                        prompt_trust_device(name, receiver_device_id, receiver_public_key).await;
+                        prompt_trust_device(
+                            name,
+                            receiver_device_id,
+                            receiver_public_key,
+                            receiver_addr,
+                        )
+                        .await;
                     }
                 }
             }
@@ -452,6 +462,7 @@ async fn prompt_trust_device(
     receiver_name: &str,
     receiver_device_id: Option<Uuid>,
     receiver_public_key: Option<&str>,
+    receiver_addr: Option<SocketAddr>,
 ) {
     let (Some(device_id), Some(public_key)) = (receiver_device_id, receiver_public_key) else {
         return;
@@ -501,8 +512,13 @@ async fn prompt_trust_device(
         TrustLevel::Full
     };
 
-    let device = TrustedDevice::new(device_id, receiver_name.to_string(), public_key.to_string())
-        .with_trust_level(trust_level);
+    let mut device =
+        TrustedDevice::new(device_id, receiver_name.to_string(), public_key.to_string())
+            .with_trust_level(trust_level);
+
+    if let Some(addr) = receiver_addr {
+        device = device.with_address(addr.ip(), addr.port());
+    }
 
     match TrustStore::load() {
         Ok(mut store) => {
@@ -510,7 +526,11 @@ async fn prompt_trust_device(
                 eprintln!("  Failed to save trust: {}", e);
             } else {
                 println!();
-                println!("  Device trusted.");
+                if let Some(addr) = receiver_addr {
+                    println!("  Device trusted (address saved: {}).", addr);
+                } else {
+                    println!("  Device trusted.");
+                }
                 println!();
             }
         }

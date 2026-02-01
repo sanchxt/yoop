@@ -4,10 +4,12 @@
 //! Authentication is done via Ed25519 signatures.
 
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use tokio::sync::watch;
+use uuid::Uuid;
 
 use yoop_core::config::{CompressionMode, TrustLevel};
 use yoop_core::crypto::DeviceIdentity;
@@ -73,47 +75,7 @@ pub async fn run(args: SendArgs) -> Result<()> {
 
     display_send_info(&files, total_size, &trusted_device.device_name, &args);
 
-    if !args.quiet {
-        print!("  Searching for {}...", trusted_device.device_name);
-        let _ = io::stdout().flush();
-    }
-
-    let discovery_timeout = Duration::from_secs(30);
-    let start_discovery = Instant::now();
-
-    let discovered = loop {
-        match tokio::time::timeout(Duration::from_secs(5), session.discover()).await {
-            Ok(Ok(device)) => break device,
-            Ok(Err(e)) => {
-                if start_discovery.elapsed() > discovery_timeout {
-                    if !args.quiet {
-                        println!();
-                    }
-                    return Err(anyhow::anyhow!(
-                        "Could not find '{}' on the network: {}",
-                        trusted_device.device_name,
-                        e
-                    ));
-                }
-            }
-            Err(_) => {
-                if start_discovery.elapsed() > discovery_timeout {
-                    if !args.quiet {
-                        println!();
-                    }
-                    return Err(anyhow::anyhow!(
-                        "Timed out searching for '{}'",
-                        trusted_device.device_name
-                    ));
-                }
-            }
-        }
-    };
-
-    if !args.quiet {
-        println!(" found at {}", discovered.source);
-        println!();
-    }
+    let discovered_addr = find_device(&mut session, &trusted_device, &args).await?;
 
     if trusted_device.trust_level == TrustLevel::AskEachTime && !args.quiet {
         print!(
@@ -156,6 +118,8 @@ pub async fn run(args: SendArgs) -> Result<()> {
     handle_transfer_result(
         result,
         &trusted_device.device_name,
+        trusted_device.device_id,
+        discovered_addr,
         &files,
         total_size,
         elapsed.as_secs(),
@@ -187,10 +151,115 @@ fn display_send_info(
     println!();
 }
 
+/// Find the target device using stored address first, then discovery as fallback.
+///
+/// Connection priority:
+/// 1. Try stored address if available (with short timeout TCP probe)
+/// 2. Fall back to network discovery if stored address is unreachable
+async fn find_device(
+    session: &mut TrustedSendSession,
+    trusted_device: &yoop_core::trust::TrustedDevice,
+    args: &SendArgs,
+) -> Result<SocketAddr> {
+    let stored_addr = trusted_device
+        .address()
+        .map(|(ip, port)| SocketAddr::new(ip, port));
+
+    if let Some(addr) = stored_addr {
+        if !args.quiet {
+            print!("  Trying stored address {}...", addr);
+            let _ = io::stdout().flush();
+        }
+
+        match tokio::time::timeout(Duration::from_secs(3), tokio::net::TcpStream::connect(addr))
+            .await
+        {
+            Ok(Ok(stream)) => {
+                drop(stream);
+                if !args.quiet {
+                    println!(" reachable");
+                    println!();
+                }
+                session.set_direct_address(addr);
+                return Ok(addr);
+            }
+            Ok(Err(e)) => {
+                tracing::debug!("Stored address {} unreachable: {}", addr, e);
+                if !args.quiet {
+                    println!(" unreachable");
+                    print!(
+                        "  Searching for {} on the network...",
+                        trusted_device.device_name
+                    );
+                    let _ = io::stdout().flush();
+                }
+            }
+            Err(_) => {
+                tracing::debug!("Stored address {} connection timed out", addr);
+                if !args.quiet {
+                    println!(" timed out");
+                    print!(
+                        "  Searching for {} on the network...",
+                        trusted_device.device_name
+                    );
+                    let _ = io::stdout().flush();
+                }
+            }
+        }
+    } else if !args.quiet {
+        print!("  Searching for {}...", trusted_device.device_name);
+        let _ = io::stdout().flush();
+    }
+
+    let discovery_timeout = Duration::from_secs(30);
+    let start_discovery = Instant::now();
+
+    let discovered = loop {
+        match tokio::time::timeout(Duration::from_secs(5), session.discover()).await {
+            Ok(Ok(device)) => break device,
+            Ok(Err(e)) => {
+                if start_discovery.elapsed() > discovery_timeout {
+                    if !args.quiet {
+                        println!();
+                    }
+                    return Err(anyhow::anyhow!(
+                        "Could not find '{}' on the network: {}",
+                        trusted_device.device_name,
+                        e
+                    ));
+                }
+            }
+            Err(_) => {
+                if start_discovery.elapsed() > discovery_timeout {
+                    if !args.quiet {
+                        println!();
+                    }
+                    return Err(anyhow::anyhow!(
+                        "Timed out searching for '{}'",
+                        trusted_device.device_name
+                    ));
+                }
+            }
+        }
+    };
+
+    let discovered_addr = discovered.source;
+
+    if !args.quiet {
+        println!(" found at {}", discovered_addr);
+        println!();
+    }
+
+    Ok(discovered_addr)
+}
+
 /// Handle the result of the transfer and update history.
+#[allow(clippy::too_many_arguments)]
 fn handle_transfer_result(
     result: yoop_core::error::Result<()>,
     device_name: &str,
+    device_id: Uuid,
+    discovered_addr: std::net::SocketAddr,
     files: &[yoop_core::file::FileMetadata],
     total_size: u64,
     duration_secs: u64,
@@ -206,6 +275,16 @@ fn handle_transfer_result(
                 HistoryState::Completed,
                 None,
             );
+
+            if let Ok(mut store) = TrustStore::load() {
+                if store.find_by_id(&device_id).is_some() {
+                    let _ = store.update_address(
+                        &device_id,
+                        discovered_addr.ip(),
+                        discovered_addr.port(),
+                    );
+                }
+            }
 
             if !args.quiet {
                 println!();

@@ -238,6 +238,8 @@ pub struct ShareSession {
     receiver_public_key: Option<String>,
     /// Receiver's device name (captured after transfer)
     receiver_name: Option<String>,
+    /// Receiver's address (captured after transfer)
+    receiver_addr: Option<SocketAddr>,
     /// Negotiated compression algorithm (None = no compression)
     negotiated_compression: Option<CompressionAlgorithm>,
 }
@@ -342,6 +344,7 @@ impl ShareSession {
             receiver_device_id: None,
             receiver_public_key: None,
             receiver_name: None,
+            receiver_addr: None,
             negotiated_compression: None,
         })
     }
@@ -382,6 +385,12 @@ impl ShareSession {
         self.receiver_name.as_deref()
     }
 
+    /// Get the receiver's address (after transfer completes).
+    #[must_use]
+    pub fn receiver_addr(&self) -> Option<SocketAddr> {
+        self.receiver_addr
+    }
+
     /// Wait for a receiver to connect and complete the transfer.
     ///
     /// # Errors
@@ -413,6 +422,7 @@ impl ShareSession {
         self.receiver_name = Some(receiver_name);
         self.receiver_device_id = receiver_device_id;
         self.receiver_public_key = receiver_public_key;
+        self.receiver_addr = Some(peer_addr);
 
         self.negotiated_compression = match (self.compression_capabilities(), receiver_compression)
         {

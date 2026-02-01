@@ -162,6 +162,36 @@ impl TrustedSendSession {
         self.progress_rx.clone()
     }
 
+    /// Get the discovered target device (if any).
+    #[must_use]
+    pub fn discovered_target(&self) -> Option<&DiscoveredDevice> {
+        self.discovered_target.as_ref()
+    }
+
+    /// Set a direct address for connection, bypassing discovery.
+    ///
+    /// This creates a synthetic `DiscoveredDevice` with the given address.
+    /// Call `send()` after this to attempt the transfer.
+    pub fn set_direct_address(&mut self, addr: SocketAddr) {
+        let synthetic_beacon = DeviceBeacon::new(
+            self.target_device.device_id,
+            &self.target_device.device_name,
+            &self.target_device.public_key,
+            addr.port(),
+        );
+
+        self.discovered_target = Some(DiscoveredDevice {
+            beacon: synthetic_beacon,
+            source: addr,
+            discovered_at: std::time::Instant::now(),
+        });
+    }
+
+    /// Clear the discovered target, allowing for fresh discovery.
+    pub fn clear_discovered_target(&mut self) {
+        self.discovered_target = None;
+    }
+
     /// Discover the target device on the network.
     ///
     /// Broadcasts a beacon looking for the target device and waits for it to respond.
