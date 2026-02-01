@@ -147,6 +147,10 @@ pub enum Error {
     #[error("trust database error: {0}")]
     TrustDbError(String),
 
+    /// Trust verification failed
+    #[error("trust verification failed: {0}")]
+    TrustError(String),
+
     /// Preview generation failed
     #[error("failed to generate preview for '{file}': {reason}")]
     PreviewFailed {
@@ -253,6 +257,10 @@ pub enum Error {
     /// Compression/decompression error
     #[error("compression error: {0}")]
     Compression(String),
+
+    /// Invalid input provided
+    #[error("invalid input: {0}")]
+    InvalidInput(String),
 }
 
 impl Error {

@@ -21,17 +21,20 @@ use super::engine::{SyncEngine, SyncPlan};
 use super::index::{FileEntry, FileIndex};
 use super::watcher::{FileEvent, FileEventKind, FileWatcher};
 use super::{FileKind, RelativePath, SyncConfig, SyncOp, SyncStats};
+use base64::prelude::*;
+
 use crate::code::{CodeGenerator, ShareCode};
-use crate::crypto::{self, TlsConfig};
+use crate::crypto::{self, DeviceIdentity, TlsConfig};
 use crate::discovery::{DiscoveryPacket, HybridBroadcaster, HybridListener};
 use crate::file::{FileChunk, FileChunker, FileWriter};
 use crate::protocol::{
     decode_payload, decode_sync_chunk, encode_payload, encode_sync_chunk, read_frame, write_frame,
     HelloPayload, MessageType, SyncCapabilities, SyncChunkAckPayload, SyncChunkPayload,
     SyncCompletePayload, SyncIndexEntry, SyncIndexPayload, SyncInitPayload, SyncOpAckPayload,
-    SyncOpPayload, SyncOpType,
+    SyncOpPayload, SyncOpType, TrustedHelloAckPayload, TrustedHelloPayload,
 };
 use crate::transfer::TransferConfig;
+use crate::trust::TrustedDevice;
 use crate::{Error, Result, DEFAULT_CHUNK_SIZE, PROTOCOL_VERSION};
 
 /// Events emitted during sync for UI updates.
@@ -102,6 +105,77 @@ pub enum SyncEvent {
     },
 }
 
+/// A pending sync host session waiting for peer connection.
+///
+/// This struct represents the first phase of hosting a sync session.
+/// It contains the share code and all resources needed to accept a connection,
+/// but doesn't block waiting for a peer. This allows the UI to display the
+/// code immediately while waiting for a connection in the background.
+pub struct SyncHostSession {
+    code: ShareCode,
+    config: SyncConfig,
+    transfer_config: TransferConfig,
+    local_index: FileIndex,
+    session_key: [u8; 32],
+    listener: TcpListener,
+    acceptor: TlsAcceptor,
+    broadcaster: HybridBroadcaster,
+    device_name: String,
+}
+
+impl SyncHostSession {
+    /// Get the share code for this session.
+    #[must_use]
+    pub fn code(&self) -> &ShareCode {
+        &self.code
+    }
+
+    /// Wait for a peer to connect and complete the handshake.
+    ///
+    /// This method blocks until a peer connects, then performs the TLS
+    /// handshake and protocol negotiation. Returns a fully-connected
+    /// `SyncSession` ready for synchronization.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or the handshake fails.
+    pub async fn wait_for_connection(self) -> Result<SyncSession> {
+        let local_addr = self.listener.local_addr()?;
+        tracing::info!("Waiting for connection on {}", local_addr);
+
+        let (tcp_stream, peer_addr) = self.listener.accept().await?;
+        tracing::info!("Connection from {}", peer_addr);
+
+        configure_tcp_keepalive(&tcp_stream)?;
+
+        let mut tls_stream = self.acceptor.accept(tcp_stream).await?;
+
+        self.broadcaster.stop().await;
+
+        let (peer_name, remote_index) = SyncSession::handshake_host(
+            &mut tls_stream,
+            &self.device_name,
+            &self.session_key,
+            &self.local_index,
+            &self.config,
+        )
+        .await?;
+
+        Ok(SyncSession {
+            config: self.config,
+            transfer_config: self.transfer_config,
+            local_index: self.local_index,
+            remote_index,
+            peer_name: Some(peer_name),
+            stats: SyncStats::new(),
+            sync_engine: SyncEngine::new(ResolutionStrategy::default()),
+            op_id_counter: 0,
+            tls_stream: Some(tokio_rustls::TlsStream::Server(tls_stream)),
+            session_start: Instant::now(),
+        })
+    }
+}
+
 /// A bidirectional sync session.
 pub struct SyncSession {
     config: SyncConfig,
@@ -129,15 +203,29 @@ impl std::fmt::Debug for SyncSession {
 }
 
 impl SyncSession {
-    /// Host a new sync session (waits for connection).
+    /// Start hosting a sync session (returns immediately with code).
+    ///
+    /// This is the first phase of hosting a sync session. It sets up the
+    /// listener, starts broadcasting, and returns immediately with a
+    /// `SyncHostSession` that contains the share code. Call
+    /// `wait_for_connection()` on the returned session to wait for a peer.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let host_session = SyncSession::host_start(config, transfer_config).await?;
+    /// println!("Share this code: {}", host_session.code());
+    /// let session = host_session.wait_for_connection().await?;
+    /// session.run(|event| println!("{:?}", event)).await?;
+    /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the session cannot be created or the connection fails.
-    pub async fn host(
+    /// Returns an error if the session cannot be created.
+    pub async fn host_start(
         config: SyncConfig,
         transfer_config: TransferConfig,
-    ) -> Result<(ShareCode, Self)> {
+    ) -> Result<SyncHostSession> {
         let code = CodeGenerator::new().generate()?;
         tracing::info!("Hosting sync session with code: {}", code);
 
@@ -178,41 +266,38 @@ impl SyncSession {
             .start(packet, transfer_config.broadcast_interval)
             .await?;
 
-        tracing::info!("Waiting for connection on {}", local_addr);
+        tracing::info!("Sync session ready with code: {}", code);
 
-        let (tcp_stream, peer_addr) = listener.accept().await?;
-        tracing::info!("Connection from {}", peer_addr);
-
-        configure_tcp_keepalive(&tcp_stream)?;
-
-        let mut tls_stream = acceptor.accept(tcp_stream).await?;
-
-        broadcaster.stop().await;
-
-        let (peer_name, remote_index) = Self::handshake_host(
-            &mut tls_stream,
-            &device_name,
-            &session_key,
-            &local_index,
-            &config,
-        )
-        .await?;
-
-        Ok((
+        Ok(SyncHostSession {
             code,
-            Self {
-                config,
-                transfer_config,
-                local_index,
-                remote_index,
-                peer_name: Some(peer_name),
-                stats: SyncStats::new(),
-                sync_engine: SyncEngine::new(ResolutionStrategy::default()),
-                op_id_counter: 0,
-                tls_stream: Some(tokio_rustls::TlsStream::Server(tls_stream)),
-                session_start: Instant::now(),
-            },
-        ))
+            config,
+            transfer_config,
+            local_index,
+            session_key,
+            listener,
+            acceptor,
+            broadcaster,
+            device_name,
+        })
+    }
+
+    /// Host a new sync session (waits for connection).
+    ///
+    /// This is a convenience method that combines `host_start()` and
+    /// `wait_for_connection()`. Use `host_start()` instead if you need
+    /// to display the code before waiting for a connection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session cannot be created or the connection fails.
+    pub async fn host(
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<(ShareCode, Self)> {
+        let host_session = Self::host_start(config, transfer_config).await?;
+        let code = host_session.code().clone();
+        let session = host_session.wait_for_connection().await?;
+        Ok((code, session))
     }
 
     /// Connect to a sync session using a code.
@@ -222,6 +307,23 @@ impl SyncSession {
     /// Returns an error if the connection fails or the handshake fails.
     pub async fn connect(
         code: &str,
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<Self> {
+        Self::connect_with_options(code, None, config, transfer_config).await
+    }
+
+    /// Connect to a sync session with optional direct address.
+    ///
+    /// When `direct_addr` is provided, discovery is bypassed and connection
+    /// is made directly to the specified address.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the connection fails or the handshake fails.
+    pub async fn connect_with_options(
+        code: &str,
+        direct_addr: Option<SocketAddr>,
         config: SyncConfig,
         transfer_config: TransferConfig,
     ) -> Result<Self> {
@@ -236,22 +338,28 @@ impl SyncSession {
 
         let session_key = crypto::derive_session_key(code);
 
-        let listener = HybridListener::new(transfer_config.discovery_port).await?;
+        let peer_addr = if let Some(addr) = direct_addr {
+            tracing::info!("Connecting directly to {}", addr);
+            addr
+        } else {
+            let listener = HybridListener::new(transfer_config.discovery_port).await?;
 
-        let share_code = ShareCode::parse(code)?;
-        let announcement = listener
-            .find(&share_code, transfer_config.discovery_timeout)
-            .await?;
+            let share_code = ShareCode::parse(code)?;
+            let announcement = listener
+                .find(&share_code, transfer_config.discovery_timeout)
+                .await?;
 
-        let peer_addr: SocketAddr = format!(
-            "{}:{}",
-            announcement.source.ip(),
-            announcement.packet.transfer_port
-        )
-        .parse()
-        .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
+            let addr: SocketAddr = format!(
+                "{}:{}",
+                announcement.source.ip(),
+                announcement.packet.transfer_port
+            )
+            .parse()
+            .map_err(|e| Error::Internal(format!("Invalid peer address: {e}")))?;
 
-        tracing::info!("Found peer at {}", peer_addr);
+            tracing::info!("Found peer at {}", addr);
+            addr
+        };
 
         let tcp_stream = TcpStream::connect(peer_addr).await?;
         configure_tcp_keepalive(&tcp_stream)?;
@@ -292,6 +400,220 @@ impl SyncSession {
             tls_stream: Some(tokio_rustls::TlsStream::Client(tls_stream)),
             session_start: Instant::now(),
         })
+    }
+
+    /// Connect to a trusted device for directory sync (codeless).
+    ///
+    /// Uses TrustedHello handshake with signature verification instead of code.
+    /// After the trusted handshake, proceeds with the SyncInit/SyncInitAck protocol.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if connection fails or trust verification fails.
+    pub async fn connect_trusted(
+        device: &TrustedDevice,
+        config: SyncConfig,
+        transfer_config: TransferConfig,
+    ) -> Result<Self> {
+        let (ip, port) = device.address().ok_or_else(|| {
+            Error::ConfigError(format!(
+                "Device '{}' has no stored address. Connect with --host first.",
+                device.device_name
+            ))
+        })?;
+        let transfer_addr = SocketAddr::new(ip, port);
+
+        tracing::info!(
+            "Connecting to trusted device '{}' at {}",
+            device.device_name,
+            transfer_addr
+        );
+
+        let local_index = FileIndex::build(&config.sync_root, &config)?;
+        tracing::debug!(
+            "Built local index: {} files, {} bytes",
+            local_index.len(),
+            local_index.total_size()
+        );
+
+        let tcp_stream = TcpStream::connect(transfer_addr).await?;
+        configure_tcp_keepalive(&tcp_stream)?;
+
+        let tls_config = TlsConfig::client()?;
+        let client_config = tls_config
+            .client_config()
+            .ok_or_else(|| Error::Internal("client config not available".to_string()))?;
+        let connector = TlsConnector::from(Arc::new(client_config.clone()));
+        let domain = ServerName::try_from("yoop.local")
+            .map_err(|_| Error::TlsError("invalid server name".to_string()))?;
+
+        let mut tls_stream = connector.connect(domain, tcp_stream).await?;
+
+        let device_name = hostname::get().map_or_else(
+            |_| "Unknown".to_string(),
+            |h| h.to_string_lossy().to_string(),
+        );
+
+        let (peer_name, remote_index) = Self::handshake_trusted_client(
+            &mut tls_stream,
+            &device_name,
+            device,
+            &local_index,
+            &config,
+        )
+        .await?;
+
+        Ok(Self {
+            config,
+            transfer_config,
+            local_index,
+            remote_index,
+            peer_name: Some(peer_name),
+            stats: SyncStats::new(),
+            sync_engine: SyncEngine::new(ResolutionStrategy::default()),
+            op_id_counter: 0,
+            tls_stream: Some(tokio_rustls::TlsStream::Client(tls_stream)),
+            session_start: Instant::now(),
+        })
+    }
+
+    /// Trusted client-side handshake.
+    ///
+    /// Handles the TrustedHello/TrustedHelloAck flow, then proceeds
+    /// to the SyncInit/SyncInitAck protocol for index exchange.
+    #[allow(clippy::too_many_lines)]
+    async fn handshake_trusted_client<S>(
+        stream: &mut S,
+        device_name: &str,
+        expected_device: &TrustedDevice,
+        local_index: &FileIndex,
+        config: &SyncConfig,
+    ) -> Result<(String, FileIndex)>
+    where
+        S: AsyncRead + AsyncWrite + Unpin,
+    {
+        let (header, payload) = read_frame(stream).await?;
+
+        let peer_name = match header.message_type {
+            MessageType::TrustedHello => {
+                let hello: TrustedHelloPayload = decode_payload(&payload)?;
+
+                if hello.device_id != expected_device.device_id {
+                    return Err(Error::TrustError(format!(
+                        "Device ID mismatch: expected {}, got {}",
+                        expected_device.device_id, hello.device_id
+                    )));
+                }
+
+                if hello.public_key != expected_device.public_key {
+                    return Err(Error::TrustError(
+                        "Public key mismatch - device may have been reinstalled".to_string(),
+                    ));
+                }
+
+                let nonce_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid nonce: {e}")))?;
+
+                let signature_bytes = BASE64_STANDARD
+                    .decode(&hello.nonce_signature)
+                    .map_err(|e| Error::ProtocolError(format!("Invalid signature: {e}")))?;
+
+                let sig_array: [u8; 64] = signature_bytes
+                    .try_into()
+                    .map_err(|_| Error::ProtocolError("Invalid signature length".to_string()))?;
+
+                if !DeviceIdentity::verify_base64(&hello.public_key, &nonce_bytes, &sig_array) {
+                    return Err(Error::TrustError("Invalid signature".to_string()));
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let response_signature = identity.sign(&nonce_bytes);
+
+                let ack = TrustedHelloAckPayload {
+                    trusted: true,
+                    device_name: Some(device_name.to_string()),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    nonce_signature: Some(BASE64_STANDARD.encode(response_signature)),
+                    error: None,
+                    trust_level: Some("Full".to_string()),
+                };
+
+                let ack_payload = encode_payload(&ack)?;
+                write_frame(stream, MessageType::TrustedHelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            MessageType::Hello => {
+                let hello: HelloPayload = decode_payload(&payload)?;
+
+                if let (Some(device_id), Some(public_key)) = (&hello.device_id, &hello.public_key) {
+                    if *device_id != expected_device.device_id {
+                        return Err(Error::TrustError(format!(
+                            "Device ID mismatch: expected {}, got {}",
+                            expected_device.device_id, device_id
+                        )));
+                    }
+
+                    if *public_key != expected_device.public_key {
+                        return Err(Error::TrustError(
+                            "Public key mismatch - device may have been reinstalled".to_string(),
+                        ));
+                    }
+                }
+
+                let identity = DeviceIdentity::load_or_generate()?;
+                let ack = HelloPayload {
+                    device_name: device_name.to_string(),
+                    protocol_version: format!("{}.{}", PROTOCOL_VERSION.0, PROTOCOL_VERSION.1),
+                    device_id: Some(identity.device_id()),
+                    public_key: Some(identity.public_key_base64()),
+                    compression: None,
+                };
+                let ack_payload = encode_payload(&ack)?;
+                write_frame(stream, MessageType::HelloAck, &ack_payload).await?;
+
+                hello.device_name
+            }
+            _ => {
+                return Err(Error::UnexpectedMessage {
+                    expected: "TrustedHello or Hello".to_string(),
+                    actual: format!("{:?}", header.message_type),
+                });
+            }
+        };
+
+        let (header, payload) = read_frame(stream).await?;
+        if header.message_type != MessageType::SyncInit {
+            return Err(Error::ProtocolError("expected SyncInit".to_string()));
+        }
+
+        let _remote_init: SyncInitPayload = decode_payload(&payload)?;
+
+        let sync_init_ack = SyncInitPayload {
+            sync_root_name: config
+                .sync_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("sync")
+                .to_string(),
+            file_count: local_index.len() as u64,
+            total_size: local_index.total_size(),
+            index_hash: local_index.root_hash(),
+            protocol_version: 1,
+            capabilities: SyncCapabilities::default(),
+        };
+        write_frame(
+            stream,
+            MessageType::SyncInitAck,
+            &encode_payload(&sync_init_ack)?,
+        )
+        .await?;
+
+        let remote_index = Self::exchange_index(stream, local_index).await?;
+
+        Ok((peer_name, remote_index))
     }
 
     /// Host-side handshake.

@@ -2,7 +2,7 @@
 
 **Cross-Platform Local Network File Sharing**
 
-[![CI](https://github.com/arceus/yoop/workflows/CI/badge.svg)](https://github.com/arceus/yoop/actions)
+[![CI](https://github.com/sanchxt/yoop/workflows/CI/badge.svg)](https://github.com/sanchxt/yoop/actions)
 [![License](https://img.shields.io/badge/license-MIT%2FApache--2.0-blue.svg)](LICENSE-MIT)
 [![Rust Version](https://img.shields.io/badge/rust-1.86.0%2B-blue.svg)](https://www.rust-lang.org)
 
@@ -12,19 +12,19 @@ Yoop enables seamless peer-to-peer file transfers over local networks using simp
 
 ### Core Features
 
--   **Cross-platform**: Works on Windows, Linux, and macOS
--   **No account required**: Zero configuration, no cloud dependency
--   **Simple 4-character codes**: Easy discovery without IP addresses
--   **QR code support**: Display scannable codes for upcoming mobile app (experimental)
--   **Dual discovery**: UDP broadcast + mDNS/DNS-SD for reliable device discovery
--   **Private & secure**: TLS 1.3 encryption, data never leaves local network
--   **Fast transfers**: Chunked transfers with xxHash64 verification
--   **Resume capability**: Interrupted transfers can be resumed automatically
--   **CLI + Web interface**: Full-featured command-line tool and browser-based UI
--   **Trusted devices**: Ed25519 signature-based authentication for direct transfers
--   **Clipboard sharing**: One-shot transfer and live bidirectional sync
--   **Directory sync**: Real-time bidirectional directory synchronization
--   **Shell completions**: Bash, Zsh, Fish, PowerShell, Elvish support
+- **Cross-platform**: Works on Windows, Linux, and macOS
+- **No account required**: Zero configuration, no cloud dependency
+- **Simple 4-character codes**: Easy discovery without IP addresses
+- **QR code support**: Display scannable codes for upcoming mobile app (experimental)
+- **Dual discovery**: UDP broadcast + mDNS/DNS-SD for reliable device discovery
+- **Private & secure**: TLS 1.3 encryption, data never leaves local network
+- **Fast transfers**: Chunked transfers with xxHash64 verification
+- **Resume capability**: Interrupted transfers can be resumed automatically
+- **CLI + Web interface**: Full-featured command-line tool and browser-based UI
+- **Trusted devices**: Ed25519 signature-based authentication for direct transfers
+- **Clipboard sharing**: One-shot transfer and live bidirectional sync
+- **Directory sync**: Real-time bidirectional directory synchronization
+- **Shell completions**: Bash, Zsh, Fish, PowerShell, Elvish support
 
 ## Quick Start
 
@@ -68,6 +68,44 @@ yoop clipboard sync A7K9           # Join sync session
 
 Supports text and images. Changes sync automatically across devices!
 
+### VPN & Overlay Network Support
+
+Yoop works seamlessly over VPN overlay networks (Tailscale, WireGuard, ZeroTier, Headscale) where UDP broadcast and mDNS discovery don't work:
+
+```bash
+# Direct connection using IP address
+yoop clipboard sync --host 100.103.164.32 A7K9
+
+# Connect to trusted device (codeless, uses stored IP)
+yoop clipboard sync --device "My-Mac"
+
+# First-time pairing over VPN
+# Device A:
+yoop clipboard sync
+# → Code: A7K9
+
+# Device B:
+yoop clipboard sync --host 100.103.164.32 A7K9
+# After successful connection, Device B is trusted
+
+# Subsequent connections (automatic):
+yoop clipboard sync --device "Device-A"
+```
+
+**How it works:**
+
+1. **First connection**: Use `--host IP[:PORT]` with a share code
+2. **Trusted pairing**: After connection, devices are added to trust store with stored IP
+3. **Future connections**: Use `--device <name>` for codeless connections
+4. **Auto-fallback**: If discovery fails, automatically tries stored IP addresses
+
+**Supported on all commands:**
+
+- `yoop receive --host IP CODE`
+- `yoop clipboard receive --device "Device-Name"`
+- `yoop clipboard sync --host IP CODE`
+- `yoop sync --device "Device-Name" ./folder`
+
 ### Directory Sync
 
 ```bash
@@ -109,7 +147,7 @@ bun add -g yoop
 Requires **Rust 1.86.0** or later.
 
 ```bash
-git clone https://github.com/arceus/yoop
+git clone https://github.com/sanchxt/yoop
 cd yoop
 cargo install --path crates/yoop-cli
 ```
@@ -136,12 +174,19 @@ Supported: Bash, Zsh, Fish, PowerShell, Elvish
 
 1. **Sender** shares files and gets a 4-character code (e.g., `A 7 K 9`)
 2. **Receiver** enters the code on their device
-3. **Discovery** happens via UDP broadcast + mDNS on local network
+3. **Discovery** happens via UDP broadcast + mDNS on local network (or direct IP with `--host`)
 4. **Transfer** occurs directly over TLS 1.3 encrypted TCP connection
 5. **Verification** using xxHash64 per chunk, SHA-256 for complete file
 6. **Resume** automatic resumption of interrupted transfers from last checkpoint
 
 **For trusted devices:** Direct connection using Ed25519 signatures (no code needed)
+
+**Connection methods:**
+
+- **Discovery**: UDP broadcast + mDNS for local networks
+- **Direct IP**: `--host IP[:PORT]` for VPN/overlay networks
+- **Trusted devices**: `--device <name>` for codeless connections with stored addresses
+- **Auto-fallback**: Tries stored IP addresses when discovery fails
 
 ```
 ┌─────────────┐           UDP Broadcast            ┌──────────────┐
@@ -177,9 +222,49 @@ yoop diagnose                      # Network diagnostics
 # Configuration & Utilities
 yoop config                        # Manage configuration
 yoop history                       # View transfer history
+yoop tui                           # Launch interactive TUI dashboard
 yoop web                           # Start web interface
 yoop completions install           # Install shell completions
 ```
+
+## TUI Mode
+
+Launch a full-featured terminal dashboard for managing all Yoop features:
+
+```bash
+# Launch TUI dashboard
+yoop tui
+
+# Launch directly to a specific view
+yoop tui --view share
+yoop tui --view receive
+yoop tui --view clipboard
+yoop tui --view devices
+```
+
+**Features:**
+
+- **Dashboard view**: All features accessible from a single interface
+- **Vim-style navigation**: `j/k` to move, `h/l` to navigate, `Space` to select
+- **Multiple views**: Share, Receive, Clipboard, Sync, Devices, History, Config
+- **Responsive layout**: Adapts to terminal size (split panels, tabs, or minimal)
+- **Real-time monitoring**: See active transfers and clipboard sync status
+- **File browser**: Built-in file browser with multi-select support
+- **Help overlay**: Press `?` for keybinding reference
+
+**Key navigation:**
+
+| Key | Action |
+|-----|--------|
+| `S/R/C/Y/D/H/G` | Switch views (Share/Receive/Clipboard/sYnc/Devices/History/confiG) |
+| `j/k` or arrows | Navigate up/down |
+| `Tab` | Cycle focus |
+| `Enter` | Confirm/Start |
+| `Space` | Toggle selection |
+| `?` | Show help |
+| `Q` | Quit |
+
+The TUI provides the same functionality as the CLI commands but with an interactive interface - perfect for users who prefer visual navigation over memorizing commands.
 
 ## Web Interface
 
@@ -194,11 +279,11 @@ yoop web --localhost-only   # Bind to localhost only
 
 **Features:**
 
--   Drag-and-drop file sharing
--   QR codes with deep links (for future mobile app integration)
--   File previews (images, text, archives)
--   Real-time transfer progress
--   No installation required (just open in browser)
+- Drag-and-drop file sharing
+- QR codes with deep links (for future mobile app integration)
+- File previews (images, text, archives)
+- Real-time transfer progress
+- No installation required (just open in browser)
 
 Access at `http://[your-ip]:8080` from any device on the network.
 
@@ -214,6 +299,13 @@ yoop share file.txt
 # Subsequent transfers: Direct send (no code needed)
 yoop send "Device-Name" file.txt
 
+# Connect to trusted device for clipboard/sync (codeless)
+yoop clipboard sync --device "Device-Name"
+yoop clipboard receive --device "Device-Name"
+
+# Direct IP connection (saves address for future use)
+yoop clipboard sync --host 192.168.1.100 A7K9
+
 # Manage trusted devices
 yoop trust list                    # List all trusted devices
 yoop trust set "Name" --level full # Set trust level
@@ -221,6 +313,8 @@ yoop trust remove "Name"           # Remove device
 ```
 
 **Security:** Uses Ed25519 signatures for authentication. No MITM attacks possible.
+
+**VPN Support:** Stored IP addresses enable seamless connections over Tailscale, WireGuard, and other overlay networks where discovery doesn't work.
 
 ## Directory Sync
 
@@ -244,11 +338,11 @@ yoop sync ./folder --max-size 100MB          # Limit file size
 
 **Features:**
 
--   **Bidirectional**: Changes sync both ways automatically
--   **Real-time**: File changes propagate within 1-2 seconds
--   **Conflict resolution**: Last-write-wins with notifications
--   **Pattern exclusions**: Gitignore-style pattern matching
--   **All file types**: Files, directories, and optionally symlinks
+- **Bidirectional**: Changes sync both ways automatically
+- **Real-time**: File changes propagate within 1-2 seconds
+- **Conflict resolution**: Last-write-wins with notifications
+- **Pattern exclusions**: Gitignore-style pattern matching
+- **All file types**: Files, directories, and optionally symlinks
 
 **Output modes:**
 
@@ -262,9 +356,9 @@ yoop sync ./folder --json     # JSON output for scripting
 
 Yoop can be configured via TOML files:
 
--   **Linux**: `~/.config/yoop/config.toml`
--   **macOS**: `~/Library/Application Support/yoop/config.toml`
--   **Windows**: `%APPDATA%\yoop\config.toml`
+- **Linux**: `~/.config/yoop/config.toml`
+- **macOS**: `~/Library/Application Support/yoop/config.toml`
+- **Windows**: `%APPDATA%\yoop\config.toml`
 
 Example configuration:
 
@@ -310,14 +404,14 @@ See all options: `yoop config list`
 
 ### Prerequisites
 
--   **Rust**: 1.86.0 or later
--   **Git**: For cloning the repository
+- **Rust**: 1.86.0 or later
+- **Git**: For cloning the repository
 
 ### Building
 
 ```bash
 # Clone repository
-git clone https://github.com/arceus/yoop
+git clone https://github.com/sanchxt/yoop
 cd yoop
 
 # Build all crates
@@ -368,22 +462,22 @@ cargo doc --workspace --open
 
 Yoop uses a custom binary protocol (LDRP) over TLS 1.3:
 
--   **Discovery**: UDP broadcast + mDNS/DNS-SD on port 52525
--   **Transfer**: TCP on ports 52530-52540
--   **Encryption**: TLS 1.3 with self-signed ephemeral certificates
--   **Integrity**: xxHash64 per chunk, SHA-256 per file
--   **Resume**: State persistence for interrupted transfer recovery
--   **Code Format**: 4 characters from `[2-9A-HJ-KMN-Z]` (avoiding ambiguous chars)
+- **Discovery**: UDP broadcast + mDNS/DNS-SD on port 52525
+- **Transfer**: TCP on ports 52530-52540
+- **Encryption**: TLS 1.3 with self-signed ephemeral certificates
+- **Integrity**: xxHash64 per chunk, SHA-256 per file
+- **Resume**: State persistence for interrupted transfer recovery
+- **Code Format**: 4 characters from `[2-9A-HJ-KMN-Z]` (avoiding ambiguous chars)
 
 ## Security
 
 Yoop prioritizes security and privacy:
 
--   **Encryption**: All transfers use TLS 1.3 with perfect forward secrecy
--   **No persistence**: Ephemeral certificates, no long-term keys (except trusted devices)
--   **Rate limiting**: 3 failed attempts → 30 second lockout
--   **Local only**: No internet connectivity required or used
--   **Code verification**: HMAC-based verification prevents timing attacks
+- **Encryption**: All transfers use TLS 1.3 with perfect forward secrecy
+- **No persistence**: Ephemeral certificates, no long-term keys (except trusted devices)
+- **Rate limiting**: 3 failed attempts → 30 second lockout
+- **Local only**: No internet connectivity required or used
+- **Code verification**: HMAC-based verification prevents timing attacks
 
 ## Contributing
 
@@ -400,8 +494,8 @@ Before submitting a PR:
 
 Licensed under either of:
 
--   **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
--   **MIT license** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- **Apache License, Version 2.0** ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
+- **MIT license** ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
 
 at your option.
 
@@ -413,9 +507,9 @@ Unless you explicitly state otherwise, any contribution intentionally submitted 
 
 Built with Rust and powered by:
 
--   [tokio](https://tokio.rs/) - Async runtime
--   [rustls](https://github.com/rustls/rustls) - TLS implementation
--   [mdns-sd](https://github.com/keepsimple1/mdns-sd) - mDNS/DNS-SD discovery
--   [arboard](https://github.com/1Password/arboard) - Cross-platform clipboard access
--   [clap](https://github.com/clap-rs/clap) - CLI parsing
--   [serde](https://serde.rs/) - Serialization framework
+- [tokio](https://tokio.rs/) - Async runtime
+- [rustls](https://github.com/rustls/rustls) - TLS implementation
+- [mdns-sd](https://github.com/keepsimple1/mdns-sd) - mDNS/DNS-SD discovery
+- [arboard](https://github.com/1Password/arboard) - Cross-platform clipboard access
+- [clap](https://github.com/clap-rs/clap) - CLI parsing
+- [serde](https://serde.rs/) - Serialization framework

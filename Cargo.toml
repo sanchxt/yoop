@@ -65,6 +65,10 @@ flume = "0.11"
 walkdir = "2"
 mime_guess = "2"
 directories = "5"
+dirs = "5"
+
+# Platform-specific (Unix)
+libc = "0.2"
 
 # Image processing (for previews)
 # Note: jpeg feature disabled due to zune-jpeg compatibility with Rust 1.86+

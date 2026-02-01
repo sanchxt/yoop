@@ -102,15 +102,26 @@ async fn check_mdns() -> bool {
     HybridListener::new(0).await.is_ok()
 }
 
+/// Trusted device information for display.
+struct TrustedDeviceInfo {
+    name: String,
+    trust_level: String,
+    stored_address: Option<String>,
+}
+
 /// Get trusted devices from the store.
-fn get_trusted_devices() -> Vec<(String, String)> {
+fn get_trusted_devices() -> Vec<TrustedDeviceInfo> {
     TrustStore::load().map_or_else(
         |_| Vec::new(),
         |store| {
             store
                 .list()
                 .iter()
-                .map(|d| (d.device_name.clone(), format!("{:?}", d.trust_level)))
+                .map(|d| TrustedDeviceInfo {
+                    name: d.device_name.clone(),
+                    trust_level: format!("{:?}", d.trust_level),
+                    stored_address: d.address().map(|(ip, port)| format!("{}:{}", ip, port)),
+                })
                 .collect()
         },
     )
@@ -142,7 +153,7 @@ async fn scan_for_shares(config: &Config) -> Vec<String> {
 fn output_json(
     net_info: &NetworkInfo,
     mdns_ok: bool,
-    trusted_devices: &[(String, String)],
+    trusted_devices: &[TrustedDeviceInfo],
     active_shares: &[String],
     config: &Config,
 ) {
@@ -158,10 +169,11 @@ fn output_json(
             "discovery": config.network.port,
             "transfer_range": format!("{}-{}", config.network.transfer_port_range.0, config.network.transfer_port_range.1),
         },
-        "trusted_devices": trusted_devices.iter().map(|(name, level)| {
+        "trusted_devices": trusted_devices.iter().map(|d| {
             serde_json::json!({
-                "name": name,
-                "trust_level": level,
+                "name": &d.name,
+                "trust_level": &d.trust_level,
+                "stored_address": &d.stored_address,
             })
         }).collect::<Vec<_>>(),
         "active_shares": active_shares,
@@ -173,7 +185,7 @@ fn output_json(
 fn output_text(
     net_info: &NetworkInfo,
     mdns_ok: bool,
-    trusted_devices: &[(String, String)],
+    trusted_devices: &[TrustedDeviceInfo],
     active_shares: &[String],
     config: &Config,
 ) {
@@ -214,8 +226,15 @@ fn output_text(
     if trusted_devices.is_empty() {
         println!("    (none configured)");
     } else {
-        for (name, level) in trusted_devices {
-            println!("    - {} ({})", name, level);
+        for device in trusted_devices {
+            let addr_info = device
+                .stored_address
+                .as_ref()
+                .map_or_else(|| "no address".to_string(), Clone::clone);
+            println!(
+                "    - {} ({}) [{}]",
+                device.name, device.trust_level, addr_info
+            );
         }
     }
 
@@ -223,10 +242,15 @@ fn output_text(
     println!("{}", "─".repeat(50));
     println!();
 
+    let has_stored_addresses = trusted_devices.iter().any(|d| d.stored_address.is_some());
+
     if !net_info.udp_broadcast_ok || !net_info.udp_listen_ok {
         println!("  Recommendations:");
         if !net_info.udp_broadcast_ok {
             println!("    - Enable UDP broadcast on your network");
+            if has_stored_addresses {
+                println!("    - Or use --device <name> to connect via stored address");
+            }
         }
         if !net_info.udp_listen_ok {
             println!("    - Check firewall allows UDP port {}", discovery_port);

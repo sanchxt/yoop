@@ -292,6 +292,52 @@ impl HybridListener {
         self.udp.find(code, timeout).await
     }
 
+    /// Find a share by code with fallback to stored IP addresses.
+    ///
+    /// First tries regular discovery (UDP + mDNS), then falls back to trying
+    /// stored IP addresses from the trust store if discovery fails.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - The share code to find
+    /// * `timeout` - Maximum time to wait for discovery
+    /// * `fallback_addresses` - List of (IP, port) pairs to try if discovery fails
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the share is not found via discovery or fallback.
+    pub async fn find_with_fallback(
+        &self,
+        code: &ShareCode,
+        timeout: Duration,
+        fallback_addresses: &[(std::net::IpAddr, u16)],
+    ) -> Result<DiscoveredShare> {
+        match self.find(code, timeout).await {
+            Ok(share) => return Ok(share),
+            Err(e) => {
+                if fallback_addresses.is_empty() {
+                    return Err(e);
+                }
+                tracing::debug!(
+                    "Discovery failed, trying {} fallback addresses",
+                    fallback_addresses.len()
+                );
+            }
+        }
+
+        for (ip, port) in fallback_addresses {
+            let addr = std::net::SocketAddr::new(*ip, *port);
+            tracing::debug!("Trying fallback address: {}", addr);
+
+            if let Ok(share) = try_direct_probe(&addr, code).await {
+                tracing::info!("Found share via fallback at {}", addr);
+                return Ok(share);
+            }
+        }
+
+        Err(Error::CodeNotFound(code.to_string()))
+    }
+
     /// Scan for all available shares.
     ///
     /// Combines results from both UDP and mDNS discovery.
@@ -373,6 +419,46 @@ fn mdns_to_discovered(mdns_share: MdnsDiscoveredShare) -> DiscoveredShare {
         source: mdns_share.address,
         discovered_at: Instant::now(),
     }
+}
+
+/// Attempt to probe a direct address to check if a share is available.
+///
+/// This function tries to connect directly to the given address and check
+/// if it's serving a share with the expected code.
+async fn try_direct_probe(
+    addr: &std::net::SocketAddr,
+    code: &ShareCode,
+) -> Result<DiscoveredShare> {
+    use tokio::net::TcpStream;
+    use tokio::time::timeout;
+
+    let connect_timeout = Duration::from_secs(2);
+    let stream = timeout(connect_timeout, TcpStream::connect(addr))
+        .await
+        .map_err(|_| Error::Timeout(2))?
+        .map_err(|e| Error::Internal(format!("Connection failed: {e}")))?;
+
+    drop(stream);
+
+    let packet = DiscoveryPacket {
+        protocol: "yoop".to_string(),
+        version: "1.0".to_string(),
+        code: code.to_string(),
+        device_name: "Unknown".to_string(),
+        device_id: Uuid::nil(),
+        expires_at: 0,
+        transfer_port: addr.port(),
+        supports: vec!["tcp".to_string()],
+        file_count: 0,
+        total_size: 0,
+        preview_available: false,
+    };
+
+    Ok(DiscoveredShare {
+        packet,
+        source: *addr,
+        discovered_at: Instant::now(),
+    })
 }
 
 #[cfg(test)]

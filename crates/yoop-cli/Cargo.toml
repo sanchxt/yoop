@@ -48,6 +48,20 @@ chrono = { workspace = true }
 arboard = { workspace = true }
 image = { workspace = true }
 
+# Session state coordination
+dirs = { workspace = true }
+serde = { workspace = true }
+
+# Cross-platform open file/URL
+open = "5"
+
+# Async utilities
+tokio-util = { workspace = true }
+
+# Platform-specific
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }
+
 [dev-dependencies]
 tempfile = { workspace = true }
 

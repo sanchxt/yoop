@@ -1,11 +1,17 @@
 //! Sync command handler for bidirectional directory synchronization.
 
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use uuid::Uuid;
+
+use yoop_core::connection::parse_host_address;
 use yoop_core::sync::{SyncConfig, SyncEvent, SyncSession};
 use yoop_core::transfer::TransferConfig;
+use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::load_config;
+use crate::tui::session::{FileEntry, PeerEntry, ProgressEntry, SessionEntry, SessionStateFile};
 
 /// Arguments for the sync command
 #[derive(clap::Parser)]
@@ -15,6 +21,14 @@ pub struct SyncArgs {
 
     /// Share code to connect to (omit to host)
     pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
+    pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Patterns to exclude (can be specified multiple times)
     #[arg(short = 'x', long = "exclude", action = clap::ArgAction::Append)]
@@ -92,11 +106,66 @@ pub async fn run(args: SyncArgs) -> anyhow::Result<()> {
         ..Default::default()
     };
 
-    if let Some(ref code) = args.code {
-        run_client(code, config, transfer_config, &args).await
-    } else {
-        run_host(config, transfer_config, &args).await
+    match resolve_sync_params(&args)? {
+        SyncMode::Host => run_host(config, transfer_config, &args).await,
+        SyncMode::CodeClient { code, direct_addr } => {
+            run_client(&code, direct_addr, config, transfer_config, &args).await
+        }
+        SyncMode::TrustedClient { device } => {
+            run_trusted_client(device, config, transfer_config, &args).await
+        }
     }
+}
+
+/// Connection mode for sync command.
+enum SyncMode {
+    /// Host a sync session (no code, no device).
+    Host,
+    /// Connect as client using a share code.
+    CodeClient {
+        code: String,
+        direct_addr: Option<SocketAddr>,
+    },
+    /// Connect as client to a trusted device (codeless).
+    TrustedClient { device: TrustedDevice },
+}
+
+/// Resolve connection parameters from sync args.
+fn resolve_sync_params(args: &SyncArgs) -> anyhow::Result<SyncMode> {
+    if let Some(ref device_name) = args.device {
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!("Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.", device_name))?
+            .clone();
+
+        device.address().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Device '{}' has no stored address. Connect with code first to save the address.",
+                device_name
+            )
+        })?;
+
+        return Ok(SyncMode::TrustedClient { device });
+    }
+
+    if args.host.is_some() && args.code.is_none() {
+        anyhow::bail!("--host requires a share code. Use: yoop sync --host <IP> <CODE> <DIR>");
+    }
+
+    if let Some(ref code) = args.code {
+        let direct_addr = if let Some(ref host) = args.host {
+            Some(parse_host_address(host)?)
+        } else {
+            None
+        };
+        return Ok(SyncMode::CodeClient {
+            code: code.clone(),
+            direct_addr,
+        });
+    }
+
+    Ok(SyncMode::Host)
 }
 
 async fn run_host(
@@ -115,7 +184,8 @@ async fn run_host(
         println!();
     }
 
-    let (code, mut session) = SyncSession::host(config.clone(), transfer_config).await?;
+    let host_session = SyncSession::host_start(config.clone(), transfer_config).await?;
+    let code = host_session.code().to_string();
 
     if !args.quiet {
         println!("  ┌─────────────────────────────────────┐");
@@ -128,6 +198,33 @@ async fn run_host(
         println!();
     }
 
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(code.clone()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: None,
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
+
+    let mut session = host_session.wait_for_connection().await?;
+
+    if !args.quiet {
+        println!("  ✓ Connected to: {}", session.peer_name());
+        println!();
+    }
+
     let quiet = args.quiet;
     let json = args.json;
     let stats = session
@@ -135,6 +232,9 @@ async fn run_host(
             print_event(&event, quiet, json);
         })
         .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if !args.quiet {
         println!();
@@ -146,6 +246,7 @@ async fn run_host(
 
 async fn run_client(
     code: &str,
+    direct_addr: Option<SocketAddr>,
     config: SyncConfig,
     transfer_config: TransferConfig,
     args: &SyncArgs,
@@ -159,13 +260,38 @@ async fn run_client(
         println!();
     }
 
-    let mut session = SyncSession::connect(code, config, transfer_config).await?;
+    let mut session =
+        SyncSession::connect_with_options(code, direct_addr, config.clone(), transfer_config)
+            .await?;
 
     if !args.quiet {
         println!("  ✓ Connected to: {}", session.peer_name());
         println!("  Sync active (Ctrl+C to stop)");
         println!();
     }
+
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(code.to_string()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: Some(PeerEntry {
+            name: session.peer_name().to_string(),
+            address: String::new(),
+        }),
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
 
     let quiet = args.quiet;
     let json = args.json;
@@ -174,6 +300,82 @@ async fn run_client(
             print_event(&event, quiet, json);
         })
         .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
+
+    if !args.quiet {
+        println!();
+        print_stats(&stats);
+    }
+
+    Ok(())
+}
+
+async fn run_trusted_client(
+    device: TrustedDevice,
+    config: SyncConfig,
+    transfer_config: TransferConfig,
+    args: &SyncArgs,
+) -> anyhow::Result<()> {
+    let (ip, port) = device
+        .address()
+        .expect("address checked in resolve_sync_params");
+
+    if !args.quiet {
+        println!("\nYoop v{}", env!("CARGO_PKG_VERSION"));
+        println!("─────────────────────────────────────");
+        println!();
+        println!(
+            "  Connecting to trusted device: {} ({}:{})",
+            device.device_name, ip, port
+        );
+        println!("  Syncing directory: {}", config.sync_root.display());
+        println!();
+    }
+
+    let mut session =
+        SyncSession::connect_trusted(&device, config.clone(), transfer_config).await?;
+
+    if !args.quiet {
+        println!("  ✓ Connected to: {}", session.peer_name());
+        println!("  Sync active (Ctrl+C to stop)");
+        println!();
+    }
+
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "sync".to_string(),
+        code: Some(format!("trusted:{}", device.device_name)),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: vec![FileEntry {
+            name: config.sync_root.display().to_string(),
+            size: 0,
+            transferred: 0,
+            status: "syncing".to_string(),
+        }],
+        peer: Some(PeerEntry {
+            name: session.peer_name().to_string(),
+            address: format!("{}:{}", ip, port),
+        }),
+        progress: ProgressEntry::default(),
+    };
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
+
+    let quiet = args.quiet;
+    let json = args.json;
+    let stats = session
+        .run(move |event| {
+            print_event(&event, quiet, json);
+        })
+        .await?;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if !args.quiet {
         println!();

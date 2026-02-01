@@ -1,6 +1,7 @@
 //! Receive command implementation.
 
 use std::io::{self, Write};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -10,6 +11,7 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use yoop_core::config::TrustLevel;
+use yoop_core::connection::parse_host_address;
 use yoop_core::file::{format_size, FileMetadata};
 use yoop_core::history::{
     HistoryFileEntry, HistoryStore, TransferDirection, TransferHistoryEntry,
@@ -20,6 +22,7 @@ use yoop_core::transfer::{ReceiveSession, TransferConfig, TransferProgress, Tran
 use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::ReceiveArgs;
+use crate::tui::session::{FileEntry, PeerEntry, ProgressEntry, SessionEntry, SessionStateFile};
 
 /// Run the receive command.
 #[allow(clippy::too_many_lines)]
@@ -28,27 +31,9 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
 
     super::spawn_update_check();
 
-    let code = yoop_core::code::ShareCode::parse(&args.code)?;
-
-    if !args.quiet && !args.json {
-        println!();
-        println!("Yoop v{}", yoop_core::VERSION);
-        println!("{}", "-".repeat(37));
-        println!();
-        println!("  Searching for code {}...", code.as_str());
-        println!();
-    }
-
-    if args.json {
-        let output = serde_json::json!({
-            "status": "searching",
-            "code": code.as_str(),
-        });
-        println!("{}", serde_json::to_string_pretty(&output)?);
-    }
-
     let output_dir = args
         .output
+        .clone()
         .or_else(|| global_config.general.default_output.clone())
         .unwrap_or_else(|| PathBuf::from("."));
 
@@ -60,7 +45,62 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         ..Default::default()
     };
 
-    let mut session = ReceiveSession::connect(&code, output_dir.clone(), config).await?;
+    let (mut session, code_for_history) = if let Some(ref device_name) = args.device {
+        if !args.quiet && !args.json {
+            println!();
+            println!("Yoop v{}", yoop_core::VERSION);
+            println!("{}", "-".repeat(37));
+            println!();
+            println!("  Connecting to trusted device '{}'...", device_name);
+            println!();
+        }
+
+        if args.json {
+            let output = serde_json::json!({
+                "status": "connecting",
+                "device": device_name,
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+
+        let trust_store = TrustStore::load()?;
+        let device = trust_store
+            .find_by_name(device_name)
+            .ok_or_else(|| anyhow::anyhow!(
+                "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
+                device_name
+            ))?
+            .clone();
+
+        let session = ReceiveSession::connect_trusted(&device, output_dir.clone(), config).await?;
+        (session, format!("trusted:{}", device_name))
+    } else {
+        let (code_str, direct_addr) = resolve_connection_params(&args)?;
+        let code = yoop_core::code::ShareCode::parse(&code_str)?;
+
+        if !args.quiet && !args.json {
+            println!();
+            println!("Yoop v{}", yoop_core::VERSION);
+            println!("{}", "-".repeat(37));
+            println!();
+            println!("  Searching for code {}...", code.as_str());
+            println!();
+        }
+
+        if args.json {
+            let output = serde_json::json!({
+                "status": "searching",
+                "code": code.as_str(),
+            });
+            println!("{}", serde_json::to_string_pretty(&output)?);
+        }
+
+        let code_for_history = code.as_str().to_string();
+        let session =
+            ReceiveSession::connect_with_options(&code, output_dir.clone(), direct_addr, config)
+                .await?;
+        (session, code_for_history)
+    };
 
     let (sender_addr, sender_name) = session.sender();
     let sender_name = sender_name.to_string();
@@ -156,7 +196,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         if args.json {
             let output = serde_json::json!({
                 "status": "declined",
-                "code": code.as_str(),
+                "code": &code_for_history,
             });
             println!("{}", serde_json::to_string_pretty(&output)?);
         }
@@ -166,15 +206,51 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
     let progress_rx = session.progress();
     let start_time = Instant::now();
 
+    let session_id = Uuid::new_v4();
+    let session_entry = SessionEntry {
+        id: session_id,
+        session_type: "receive".to_string(),
+        code: Some(code_for_history.clone()),
+        pid: std::process::id(),
+        started_at: chrono::Utc::now(),
+        expires_at: None,
+        files: files
+            .iter()
+            .map(|f| FileEntry {
+                name: f.file_name().to_string(),
+                size: f.size,
+                transferred: 0,
+                status: "pending".to_string(),
+            })
+            .collect(),
+        peer: Some(PeerEntry {
+            name: sender_name.clone(),
+            address: sender_addr.to_string(),
+        }),
+        progress: ProgressEntry::default(),
+    };
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.add_session(session_entry);
+
     let quiet = args.quiet;
     let json = args.json;
     let progress_handle = if !quiet && !json {
-        Some(tokio::spawn(display_progress(progress_rx)))
+        Some(tokio::spawn(display_progress(
+            progress_rx.clone(),
+            session_id,
+        )))
     } else {
-        None
+        Some(tokio::spawn(update_session_state(
+            progress_rx.clone(),
+            session_id,
+        )))
     };
 
     let result = session.accept().await;
+
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.remove_session(session_id);
 
     if let Some(handle) = progress_handle {
         let _ = handle.await;
@@ -185,7 +261,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
     match result {
         Ok(()) => {
             record_history(
-                code.as_str(),
+                &code_for_history,
                 &sender_name,
                 &files,
                 total_size,
@@ -193,7 +269,17 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 &output_dir,
                 HistoryState::Completed,
                 None,
+                sender_device_id,
             );
+
+            if let Some(device_id) = sender_device_id {
+                if let Ok(mut store) = TrustStore::load() {
+                    if store.find_by_id(&device_id).is_some() {
+                        let _ =
+                            store.update_address(&device_id, sender_addr.ip(), sender_addr.port());
+                    }
+                }
+            }
 
             if !args.quiet && !args.json {
                 println!();
@@ -207,6 +293,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                         &sender_name,
                         sender_device_id,
                         sender_public_key.as_deref(),
+                        sender_addr,
                     )
                     .await;
                 }
@@ -214,7 +301,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
             if args.json {
                 let output = serde_json::json!({
                     "status": "complete",
-                    "code": code.as_str(),
+                    "code": &code_for_history,
                     "total_received": total_size,
                     "output_dir": output_dir.display().to_string(),
                 });
@@ -224,7 +311,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
         }
         Err(e) => {
             record_history(
-                code.as_str(),
+                &code_for_history,
                 &sender_name,
                 &files,
                 total_size,
@@ -232,6 +319,7 @@ pub async fn run(args: ReceiveArgs) -> Result<()> {
                 &output_dir,
                 HistoryState::Failed,
                 Some(e.to_string()),
+                sender_device_id,
             );
 
             if !args.quiet && !args.json {
@@ -255,6 +343,7 @@ fn record_history(
     output_dir: &std::path::Path,
     state: HistoryState,
     error: Option<String>,
+    sender_device_id: Option<Uuid>,
 ) {
     let history_files: Vec<HistoryFileEntry> = files
         .iter()
@@ -274,6 +363,10 @@ fn record_history(
     .with_stats(total_bytes, duration_secs)
     .with_state(state)
     .with_output_dir(output_dir.to_path_buf());
+
+    if let Some(device_id) = sender_device_id {
+        entry = entry.with_device_id(device_id);
+    }
 
     if let Some(err_msg) = error {
         entry = entry.with_error(err_msg);
@@ -346,8 +439,9 @@ fn format_preview_info(file: &FileMetadata) -> String {
     }
 }
 
-async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
+async fn display_progress(mut rx: watch::Receiver<TransferProgress>, session_id: Uuid) {
     let mut last_state = TransferState::Preparing;
+    let mut last_update = Instant::now();
 
     loop {
         if rx.changed().await.is_err() {
@@ -355,6 +449,11 @@ async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
         }
 
         let progress = rx.borrow().clone();
+
+        if last_update.elapsed() >= std::time::Duration::from_millis(500) {
+            update_session_state_once(&progress, session_id);
+            last_update = Instant::now();
+        }
 
         if progress.state != last_state {
             last_state = progress.state;
@@ -396,11 +495,52 @@ async fn display_progress(mut rx: watch::Receiver<TransferProgress>) {
     println!();
 }
 
+/// Update session state in the background.
+async fn update_session_state(mut rx: watch::Receiver<TransferProgress>, session_id: Uuid) {
+    let mut last_update = Instant::now();
+
+    loop {
+        let timeout = tokio::time::timeout(std::time::Duration::from_secs(1), rx.changed()).await;
+        let progress = rx.borrow().clone();
+
+        if last_update.elapsed() >= std::time::Duration::from_millis(500) {
+            update_session_state_once(&progress, session_id);
+            last_update = Instant::now();
+        }
+
+        match progress.state {
+            TransferState::Completed | TransferState::Cancelled | TransferState::Failed => break,
+            _ => {}
+        }
+
+        if timeout.is_err() {
+            continue;
+        }
+        if timeout.unwrap().is_err() {
+            break;
+        }
+    }
+}
+
+/// Update session state file once with current progress.
+fn update_session_state_once(progress: &TransferProgress, session_id: Uuid) {
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.update_session_progress(
+        session_id,
+        ProgressEntry {
+            transferred: progress.total_bytes_transferred,
+            total: progress.total_bytes,
+            speed_bps: progress.speed_bps,
+        },
+    );
+}
+
 /// Prompt the user to trust the sender device after a successful transfer.
 async fn prompt_trust_device(
     sender_name: &str,
     sender_device_id: Option<Uuid>,
     sender_public_key: Option<&str>,
+    sender_addr: SocketAddr,
 ) {
     let (Some(device_id), Some(public_key)) = (sender_device_id, sender_public_key) else {
         return;
@@ -451,7 +591,8 @@ async fn prompt_trust_device(
     };
 
     let device = TrustedDevice::new(device_id, sender_name.to_string(), public_key.to_string())
-        .with_trust_level(trust_level);
+        .with_trust_level(trust_level)
+        .with_address(sender_addr.ip(), sender_addr.port());
 
     match TrustStore::load() {
         Ok(mut store) => {
@@ -459,7 +600,7 @@ async fn prompt_trust_device(
                 eprintln!("  Failed to save trust: {}", e);
             } else {
                 println!();
-                println!("  Device trusted.");
+                println!("  Device trusted (address saved: {}).", sender_addr);
                 println!();
             }
         }
@@ -467,4 +608,30 @@ async fn prompt_trust_device(
             eprintln!("  Failed to load trust store: {}", e);
         }
     }
+}
+
+/// Resolve connection parameters from command args.
+///
+/// Returns the code string and optional direct address based on --code and --host flags.
+/// Note: --device is handled separately in the run() function.
+fn resolve_connection_params(
+    args: &super::ReceiveArgs,
+) -> Result<(String, Option<std::net::SocketAddr>)> {
+    let code = args
+        .code
+        .as_ref()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "A share code must be provided (or use --device for trusted connections)"
+            )
+        })?
+        .clone();
+
+    let direct_addr = if let Some(ref host) = args.host {
+        Some(parse_host_address(host)?)
+    } else {
+        None
+    };
+
+    Ok((code, direct_addr))
 }

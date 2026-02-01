@@ -66,6 +66,7 @@ pub mod send;
 pub mod share;
 pub mod sync;
 pub mod trust;
+pub mod tui;
 #[cfg(feature = "update")]
 pub mod update;
 pub mod web;
@@ -123,6 +124,9 @@ pub enum Command {
     /// Check for and install updates
     #[cfg(feature = "update")]
     Update(UpdateArgs),
+
+    /// Launch terminal user interface
+    Tui(tui::TuiArgs),
 
     /// Internal: hold clipboard content (not user-facing, used by spawn)
     #[command(hide = true)]
@@ -188,8 +192,17 @@ pub struct ShareArgs {
 /// Arguments for the receive command
 #[derive(Parser)]
 pub struct ReceiveArgs {
-    /// Share code to connect to
-    pub code: String,
+    /// Share code to connect to (required unless --device is used)
+    #[arg(required_unless_present = "device")]
+    pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
+    pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Output directory for received files
     #[arg(short, long)]
@@ -458,8 +471,17 @@ pub struct ClipboardShareArgs {
 /// Arguments for clipboard receive
 #[derive(Parser)]
 pub struct ClipboardReceiveArgs {
-    /// Share code to connect to
-    pub code: String,
+    /// Share code to connect to (required unless --device is used)
+    #[arg(required_unless_present = "device")]
+    pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
+    pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 
     /// Non-interactive mode (auto-accept)
     #[arg(long)]
@@ -471,6 +493,14 @@ pub struct ClipboardReceiveArgs {
 pub struct ClipboardSyncArgs {
     /// Share code to connect to (omit to host new session)
     pub code: Option<String>,
+
+    /// Connect directly to peer IP, bypassing discovery (e.g., 192.168.1.100 or 192.168.1.100:52530)
+    #[arg(long, value_name = "IP[:PORT]", conflicts_with = "device")]
+    pub host: Option<String>,
+
+    /// Connect to a trusted device by name (no code needed)
+    #[arg(long, value_name = "NAME", conflicts_with = "code")]
+    pub device: Option<String>,
 }
 
 /// Arguments for internal clipboard hold command (not user-facing)
