@@ -1,4 +1,4 @@
-.PHONY: all build release test lint fmt check clean doc install help \
+.PHONY: all build release release-multi test lint fmt check clean doc install help \
        npm-build npm-build-native npm-publish npm-dry-run sync-versions
 
 # Default target
@@ -8,9 +8,15 @@ all: check
 build:
 	cargo build --workspace
 
-# Build release
+# Build release for host architecture at target/release
 release:
 	cargo build --workspace --release
+
+# Build release for host architecture at target/<architecture>/release
+release-multi:
+	cargo install cross
+	cross build --release  --target x86_64-unknown-linux-gnu
+	cross build --release  --target aarch64-unknown-linux-gnu
 
 # Run all tests
 test:
@@ -75,7 +81,8 @@ help:
 	@echo "Targets:"
 	@echo "  all            Run all checks (default)"
 	@echo "  build          Build debug version"
-	@echo "  release        Build release version"
+	@echo "  release        Build release for host architecture at target/release"
+	@echo "  release-multi  Build release for multiple CPU architectures at each: target/<architecture>/release"
 	@echo "  test           Run all tests"
 	@echo "  test-verbose   Run tests with output"
 	@echo "  lint           Run clippy linter"
