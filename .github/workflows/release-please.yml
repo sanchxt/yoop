@@ -42,9 +42,27 @@ jobs:
         with:
           node-version: 20
 
+      - name: Install Rust
+        if: ${{ steps.release.outputs.release_created }}
+        uses: dtolnay/rust-toolchain@stable
+
       - name: Sync npm package versions
         if: ${{ steps.release.outputs.pr }}
         run: node scripts/sync-versions.js
+
+      - name: Build release binary
+        if: ${{ steps.release.outputs.release_created }}
+        run: cargo build --workspace --release
+
+      - name: Binary to GitHub Release for Linux-x86_64
+        if: ${{ steps.release.outputs.release_created }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.release.outputs.tag_name }}
+          name: yoop_linux-x86_64
+          files: target/release/yoop
+          draft: false
+          prerelease: false
 
       - name: Commit synced versions
         if: ${{ steps.release.outputs.pr }}
