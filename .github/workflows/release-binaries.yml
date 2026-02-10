@@ -1,0 +1,49 @@
+name: Release Binaries
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repo with release tag
+        uses: actions/checkout@v5
+
+      - name: Install system deps for aarch64 cross-build
+        run: |
+          sudo apt update
+          sudo apt install -y \
+            gcc-aarch64-linux-gnu \
+            gcc-x86-64-linux-gnu \
+            binutils-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-gnu
+
+      - name: Build x86_64 release
+        run: cargo build --release --target x86_64-unknown-linux-gnu
+
+      - name: Build aarch64 release for arm
+        run: cargo build --release --target aarch64-unknown-linux-gnu
+
+       - name: Rename binaries
+        run: |
+          cp target/x86_64-unknown-linux-gnu/release/yoop yoop-amd64
+          cp target/aarch64-unknown-linux-gnu/release/yoop yoop-aarch64
+
+      - name: Push binaries to github release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            yoop-amd64
+            yoop-aarch64
