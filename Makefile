@@ -15,11 +15,11 @@ release:
 # Build release for host architecture at target/<architecture>/release
 release-multi:
 	cargo install cross
-	@if [ ! -d ./target/x86_64-unknown-linux-gnu/release ]; then \
+	@if [ ! -f ./target/x86_64-unknown-linux-gnu/release/yoop ]; then \
 		cross build --release  --target x86_64-unknown-linux-gnu; \
 	else echo "./target/x86_64-unknown-linux-gnu/release already exists, skipping build..."; \
 	fi
-	@if [ ! -d ./target/aarch64-unknown-linux-gnu/release ]; then \
+	@if [ ! -f ./target/aarch64-unknown-linux-gnu/release/yoop ]; then \
 		cross build --release  --target aarch64-unknown-linux-gnu; \
 	else echo "./target/aarch64-unknown-linux-gnu/release already exists, skipping build..."; \
 	fi

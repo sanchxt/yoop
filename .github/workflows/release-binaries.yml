@@ -3,7 +3,7 @@ name: Release Binaries
 on:
   push:
     tags:
-      - "*"
+      - "v*"
   workflow_dispatch:
     inputs:
       tag:
@@ -49,6 +49,10 @@ jobs:
 
       - name: Build aarch64 release for arm
         run: cargo build --release --target aarch64-unknown-linux-gnu
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: aarch64-linux-gnu-gcc
+          CC_aarch64_unknown_linux_gnu: aarch64-linux-gnu-gcc
+          AR_aarch64_unknown_linux_gnu: aarch64-linux-gnu-ar
 
       - name: Rename binaries
         run: |
