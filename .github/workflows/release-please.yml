@@ -19,7 +19,6 @@ jobs:
       tag_name: ${{ steps.release.outputs.tag_name }}
       version: ${{ steps.release.outputs.version }}
       pr: ${{ steps.release.outputs.pr }}
-
     steps:
       - name: Run release-please
         uses: googleapis/release-please-action@v4
