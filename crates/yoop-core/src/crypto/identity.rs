@@ -289,16 +289,17 @@ impl DeviceIdentity {
         self.device_id
     }
 
-    /// Derive a stable device ID from a public key.
+    /// Derive a stable device ID from raw public key bytes.
     ///
-    /// Uses SHA-256 of the public key bytes, then takes the first 16 bytes
-    /// to form a UUID v4 (with version/variant bits set).
-    fn derive_device_id(verifying_key: &VerifyingKey) -> Uuid {
+    /// This is useful when validating identity metadata received before a
+    /// device has been trusted.
+    #[must_use]
+    pub fn derive_device_id_from_public_key(public_key_bytes: &[u8; 32]) -> Uuid {
         use sha2::{Digest, Sha256};
 
         let mut hasher = Sha256::new();
         hasher.update(b"yoop:device_id:");
-        hasher.update(verifying_key.as_bytes());
+        hasher.update(public_key_bytes);
         let hash = hasher.finalize();
 
         let mut bytes = [0u8; 16];
@@ -308,6 +309,32 @@ impl DeviceIdentity {
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
 
         Uuid::from_bytes(bytes)
+    }
+
+    /// Derive a stable device ID from a base64-encoded public key.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the public key is not valid base64 or does not
+    /// decode to 32 bytes.
+    pub fn derive_device_id_from_public_key_base64(public_key_base64: &str) -> Result<Uuid> {
+        let public_key_bytes = BASE64_STANDARD
+            .decode(public_key_base64)
+            .map_err(|e| Error::ConfigError(format!("Failed to decode public key: {e}")))?;
+
+        let public_key_array: [u8; 32] = public_key_bytes
+            .try_into()
+            .map_err(|_| Error::ConfigError("Invalid public key length".to_string()))?;
+
+        Ok(Self::derive_device_id_from_public_key(&public_key_array))
+    }
+
+    /// Derive a stable device ID from a public key.
+    ///
+    /// Uses SHA-256 of the public key bytes, then takes the first 16 bytes
+    /// to form a UUID v4 (with version/variant bits set).
+    fn derive_device_id(verifying_key: &VerifyingKey) -> Uuid {
+        Self::derive_device_id_from_public_key(verifying_key.as_bytes())
     }
 }
 
@@ -364,6 +391,15 @@ mod tests {
 
         let derived = DeviceIdentity::derive_device_id(&identity.verifying_key());
         assert_eq!(derived, identity.device_id());
+
+        let derived_from_public_key =
+            DeviceIdentity::derive_device_id_from_public_key(&identity.public_key_bytes());
+        assert_eq!(derived_from_public_key, identity.device_id());
+
+        let derived_from_base64 =
+            DeviceIdentity::derive_device_id_from_public_key_base64(&identity.public_key_base64())
+                .expect("should derive from base64 public key");
+        assert_eq!(derived_from_base64, identity.device_id());
     }
 
     #[test]
