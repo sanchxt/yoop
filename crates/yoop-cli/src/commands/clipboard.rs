@@ -2,7 +2,7 @@
 
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{bail, Result};
 use tokio::io::{AsyncBufReadExt, BufReader};
@@ -14,11 +14,19 @@ use yoop_core::clipboard::{
 use yoop_core::config::Config;
 use yoop_core::connection::parse_host_address;
 use yoop_core::transfer::TransferConfig;
-use yoop_core::trust::TrustStore;
+use yoop_core::trust::{TrustStore, TrustedDevice};
 
 use super::{ClipboardAction, ClipboardArgs};
 use crate::tui::session::{ClipboardSyncEntry, SessionStateFile};
 use crate::ui::{format_remaining, CodeBox};
+
+const TRUSTED_SYNC_RETRY_DELAYS: [Duration; 5] = [
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+    Duration::from_secs(10),
+    Duration::from_secs(30),
+];
 
 /// Create a TransferConfig using global config values.
 fn create_transfer_config(global_config: &Config) -> TransferConfig {
@@ -432,7 +440,7 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
     }
 
     if let Some(ref device_name) = args.device {
-        return run_sync_trusted(device_name, config, quiet, json).await;
+        return run_sync_trusted(device_name, config, quiet, json, args.keepalive).await;
     }
 
     if let Some((code_str, direct_addr)) = resolve_clipboard_sync_params(&args)? {
@@ -508,17 +516,73 @@ async fn run_sync_trusted(
     config: TransferConfig,
     quiet: bool,
     json: bool,
+    keepalive: bool,
 ) -> Result<()> {
-    let trust_store = TrustStore::load()?;
-    let device = trust_store
-        .find_by_name(device_name)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
-                device_name
-            )
-        })?
-        .clone();
+    if keepalive {
+        run_sync_trusted_keepalive(device_name, config, quiet, json).await
+    } else {
+        run_sync_trusted_once(device_name, config, quiet, json).await
+    }
+}
+
+/// Run trusted-device clipboard sync with automatic reconnects.
+async fn run_sync_trusted_keepalive(
+    device_name: &str,
+    config: TransferConfig,
+    quiet: bool,
+    json: bool,
+) -> Result<()> {
+    let _ = load_trusted_device(device_name)?;
+    let mut retry_count = 0usize;
+
+    loop {
+        match run_sync_trusted_once(device_name, config.clone(), quiet, json).await {
+            Ok(()) => {
+                retry_count = 0;
+                print_trusted_sync_retry(
+                    device_name,
+                    None,
+                    trusted_sync_retry_delay(retry_count),
+                    quiet,
+                    json,
+                )?;
+            }
+            Err(e) => {
+                let delay = trusted_sync_retry_delay(retry_count);
+                print_trusted_sync_retry(device_name, Some(&e), delay, quiet, json)?;
+                retry_count = retry_count.saturating_add(1);
+            }
+        }
+
+        tokio::select! {
+            () = tokio::time::sleep(trusted_sync_retry_delay(retry_count.saturating_sub(1))) => {}
+            result = tokio::signal::ctrl_c() => {
+                if let Err(e) = result {
+                    tracing::debug!("Failed to listen for Ctrl-C: {e}");
+                }
+                if json {
+                    let output = serde_json::json!({
+                        "status": "stopped",
+                        "device": device_name,
+                    });
+                    println!("{}", serde_json::to_string_pretty(&output)?);
+                } else if !quiet {
+                    println!("  Stopped clipboard sync keepalive.");
+                }
+                return Ok(());
+            }
+        }
+    }
+}
+
+/// Run one trusted-device clipboard sync session.
+async fn run_sync_trusted_once(
+    device_name: &str,
+    config: TransferConfig,
+    quiet: bool,
+    json: bool,
+) -> Result<()> {
+    let device = load_trusted_device(device_name)?;
 
     if !quiet && !json {
         println!("  Connecting to trusted device '{}'...", device_name);
@@ -558,6 +622,63 @@ async fn run_sync_trusted(
     }
 
     run_sync_session(session, runner, quiet, json).await
+}
+
+fn load_trusted_device(device_name: &str) -> Result<TrustedDevice> {
+    let trust_store = TrustStore::load()?;
+    trust_store.find_by_name(device_name).cloned().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Device '{}' not found in trusted devices. Run 'yoop trust list' to see trusted devices.",
+            device_name
+        )
+    })
+}
+
+fn trusted_sync_retry_delay(retry_count: usize) -> Duration {
+    TRUSTED_SYNC_RETRY_DELAYS
+        .get(retry_count)
+        .copied()
+        .unwrap_or_else(|| {
+            TRUSTED_SYNC_RETRY_DELAYS[TRUSTED_SYNC_RETRY_DELAYS.len().saturating_sub(1)]
+        })
+}
+
+fn print_trusted_sync_retry(
+    device_name: &str,
+    error: Option<&anyhow::Error>,
+    delay: Duration,
+    quiet: bool,
+    json: bool,
+) -> Result<()> {
+    if json {
+        let mut output = serde_json::json!({
+            "status": "retrying",
+            "device": device_name,
+            "retry_in_secs": delay.as_secs(),
+        });
+
+        if let Some(error) = error {
+            output["error"] = serde_json::json!(format!("{}", error));
+        }
+
+        println!("{}", serde_json::to_string_pretty(&output)?);
+    } else if !quiet {
+        match error {
+            Some(error) => eprintln!(
+                "  Sync disconnected from '{}': {}. Retrying in {}s...",
+                device_name,
+                error,
+                delay.as_secs()
+            ),
+            None => println!(
+                "  Sync session ended. Reconnecting to '{}' in {}s...",
+                device_name,
+                delay.as_secs()
+            ),
+        }
+    }
+
+    Ok(())
 }
 
 async fn wait_for_peer_with_display(
@@ -781,4 +902,19 @@ fn resolve_clipboard_sync_params(
     }
 
     Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn trusted_sync_retry_delay_backs_off_to_cap() {
+        assert_eq!(trusted_sync_retry_delay(0), Duration::from_secs(1));
+        assert_eq!(trusted_sync_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(trusted_sync_retry_delay(2), Duration::from_secs(5));
+        assert_eq!(trusted_sync_retry_delay(3), Duration::from_secs(10));
+        assert_eq!(trusted_sync_retry_delay(4), Duration::from_secs(30));
+        assert_eq!(trusted_sync_retry_delay(99), Duration::from_secs(30));
+    }
 }
