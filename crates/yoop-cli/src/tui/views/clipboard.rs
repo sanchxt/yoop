@@ -396,14 +396,30 @@ impl ClipboardView {
             .split(area);
 
         let sync_session = state.clipboard_sync.as_ref().unwrap();
+        let is_retrying = sync_session.status == "retrying";
+        let title = if is_retrying {
+            " Clipboard Sync Retrying "
+        } else {
+            " Clipboard Sync Active "
+        };
+        let border_color = if is_retrying {
+            theme.warning
+        } else {
+            theme.success
+        };
+        let peer_label = if is_retrying {
+            "Retrying: "
+        } else {
+            "Connected to: "
+        };
         let block = Block::default()
-            .title(" Clipboard Sync Active ")
+            .title(title)
             .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme.success));
+            .border_style(Style::default().fg(border_color));
 
         let header_content = vec![
             Line::from(vec![
-                Span::styled("Connected to: ", Style::default().fg(theme.text_muted)),
+                Span::styled(peer_label, Style::default().fg(theme.text_muted)),
                 Span::styled(
                     &sync_session.peer_name,
                     Style::default()
@@ -417,6 +433,10 @@ impl ClipboardView {
                     &sync_session.peer_address,
                     Style::default().fg(theme.text_secondary),
                 ),
+            ]),
+            Line::from(vec![
+                Span::styled("Status: ", Style::default().fg(theme.text_muted)),
+                Span::styled(&sync_session.status, Style::default().fg(border_color)),
             ]),
         ];
 

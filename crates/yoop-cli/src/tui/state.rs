@@ -986,6 +986,8 @@ pub struct ClipboardSyncSession {
     pub peer_name: String,
     /// Peer address
     pub peer_address: String,
+    /// Current sync status
+    pub status: String,
     /// Items sent
     pub items_sent: u64,
     /// Items received

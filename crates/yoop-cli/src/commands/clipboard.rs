@@ -20,6 +20,9 @@ use super::{ClipboardAction, ClipboardArgs};
 use crate::tui::session::{ClipboardSyncEntry, SessionStateFile};
 use crate::ui::{format_remaining, CodeBox};
 
+const CLIPBOARD_SYNC_STATUS_CONNECTED: &str = "connected";
+const CLIPBOARD_SYNC_STATUS_RETRYING: &str = "retrying";
+
 const TRUSTED_SYNC_RETRY_DELAYS: [Duration; 5] = [
     Duration::from_secs(1),
     Duration::from_secs(2),
@@ -471,7 +474,7 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
             }
         };
 
-        run_sync_session(session, runner, quiet, json).await
+        run_sync_session(session, runner, quiet, json, true).await
     } else {
         let host_session = match ClipboardSyncSession::host(config).await {
             Ok(result) => result,
@@ -506,7 +509,7 @@ async fn run_sync(args: super::ClipboardSyncArgs, quiet: bool, json: bool) -> Re
         let (session, runner) =
             wait_for_peer_with_display(host_session, trust_store.as_ref(), quiet, json).await?;
 
-        run_sync_session(session, runner, quiet, json).await
+        run_sync_session(session, runner, quiet, json, true).await
     }
 }
 
@@ -532,13 +535,24 @@ async fn run_sync_trusted_keepalive(
     quiet: bool,
     json: bool,
 ) -> Result<()> {
-    let _ = load_trusted_device(device_name)?;
+    let device = load_trusted_device(device_name)?;
+    let keepalive_started_at = chrono::Utc::now();
     let mut retry_count = 0usize;
+    set_trusted_clipboard_sync_state(
+        &device,
+        keepalive_started_at,
+        CLIPBOARD_SYNC_STATUS_RETRYING,
+    );
 
     loop {
-        match run_sync_trusted_once(device_name, config.clone(), quiet, json).await {
+        match run_sync_trusted_device_once(&device, config.clone(), quiet, json, false).await {
             Ok(()) => {
                 retry_count = 0;
+                set_trusted_clipboard_sync_state(
+                    &device,
+                    keepalive_started_at,
+                    CLIPBOARD_SYNC_STATUS_RETRYING,
+                );
                 print_trusted_sync_retry(
                     device_name,
                     None,
@@ -549,6 +563,11 @@ async fn run_sync_trusted_keepalive(
             }
             Err(e) => {
                 let delay = trusted_sync_retry_delay(retry_count);
+                set_trusted_clipboard_sync_state(
+                    &device,
+                    keepalive_started_at,
+                    CLIPBOARD_SYNC_STATUS_RETRYING,
+                );
                 print_trusted_sync_retry(device_name, Some(&e), delay, quiet, json)?;
                 retry_count = retry_count.saturating_add(1);
             }
@@ -569,6 +588,7 @@ async fn run_sync_trusted_keepalive(
                 } else if !quiet {
                     println!("  Stopped clipboard sync keepalive.");
                 }
+                clear_clipboard_sync_state();
                 return Ok(());
             }
         }
@@ -583,7 +603,17 @@ async fn run_sync_trusted_once(
     json: bool,
 ) -> Result<()> {
     let device = load_trusted_device(device_name)?;
+    run_sync_trusted_device_once(&device, config, quiet, json, true).await
+}
 
+async fn run_sync_trusted_device_once(
+    device: &TrustedDevice,
+    config: TransferConfig,
+    quiet: bool,
+    json: bool,
+    clear_state_on_end: bool,
+) -> Result<()> {
+    let device_name = &device.device_name;
     if !quiet && !json {
         println!("  Connecting to trusted device '{}'...", device_name);
         println!();
@@ -621,7 +651,7 @@ async fn run_sync_trusted_once(
         println!();
     }
 
-    run_sync_session(session, runner, quiet, json).await
+    run_sync_session(session, runner, quiet, json, clear_state_on_end).await
 }
 
 fn load_trusted_device(device_name: &str) -> Result<TrustedDevice> {
@@ -632,6 +662,42 @@ fn load_trusted_device(device_name: &str) -> Result<TrustedDevice> {
             device_name
         )
     })
+}
+
+fn set_trusted_clipboard_sync_state(
+    device: &TrustedDevice,
+    started_at: chrono::DateTime<chrono::Utc>,
+    status: &str,
+) {
+    let mut state_file = SessionStateFile::load_or_create();
+    let current_pid = std::process::id();
+    let (items_sent, items_received) = state_file
+        .clipboard_sync
+        .as_ref()
+        .filter(|sync| sync.pid == current_pid && sync.peer_name == device.device_name)
+        .map_or((0, 0), |sync| (sync.items_sent, sync.items_received));
+
+    state_file.set_clipboard_sync(Some(ClipboardSyncEntry {
+        peer_name: device.device_name.clone(),
+        peer_address: trusted_device_address(device),
+        status: status.to_string(),
+        pid: current_pid,
+        started_at,
+        items_sent,
+        items_received,
+    }));
+}
+
+fn clear_clipboard_sync_state() {
+    let mut state_file = SessionStateFile::load_or_create();
+    state_file.set_clipboard_sync(None);
+}
+
+fn trusted_device_address(device: &TrustedDevice) -> String {
+    device.address().map_or_else(
+        || "unknown".to_string(),
+        |(ip, port)| format!("{ip}:{port}"),
+    )
 }
 
 fn trusted_sync_retry_delay(retry_count: usize) -> Duration {
@@ -731,6 +797,7 @@ async fn run_sync_session(
     runner: SyncSessionRunner,
     quiet: bool,
     json: bool,
+    clear_state_on_end: bool,
 ) -> Result<()> {
     use yoop_core::clipboard::SyncEvent;
 
@@ -744,6 +811,7 @@ async fn run_sync_session(
     state_file.set_clipboard_sync(Some(ClipboardSyncEntry {
         peer_name: session.peer_name().to_string(),
         peer_address: session.peer_addr().to_string(),
+        status: CLIPBOARD_SYNC_STATUS_CONNECTED.to_string(),
         pid: std::process::id(),
         started_at: chrono::Utc::now(),
         items_sent: 0,
@@ -752,11 +820,11 @@ async fn run_sync_session(
 
     let result = runner.run().await;
 
-    let mut state_file = SessionStateFile::load_or_create();
-    state_file.set_clipboard_sync(None);
-
     match result {
         Ok((stats, mut event_rx)) => {
+            let mut state_file = SessionStateFile::load_or_create();
+            state_file.update_clipboard_sync_stats(stats.items_sent, stats.items_received);
+
             while let Ok(event) = event_rx.try_recv() {
                 match event {
                     SyncEvent::Sent { content_type, size } => {
@@ -799,6 +867,9 @@ async fn run_sync_session(
             }
 
             session.shutdown();
+            if clear_state_on_end {
+                clear_clipboard_sync_state();
+            }
 
             Ok(())
         }
@@ -811,6 +882,9 @@ async fn run_sync_session(
                 println!("{}", serde_json::to_string_pretty(&output)?);
             } else if !quiet {
                 eprintln!("  Sync error: {}", e);
+            }
+            if clear_state_on_end {
+                clear_clipboard_sync_state();
             }
             Err(e.into())
         }
