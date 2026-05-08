@@ -265,19 +265,29 @@ async fn run_pair_scan(
     candidates.extend(discover_tailscale_pairing_candidates(&pairing_config).await);
     dedupe_candidates(&mut candidates);
 
-    if json {
-        output_candidates_json(&candidates)?;
-        return Ok(());
-    }
-
     if candidates.is_empty() {
-        println!("No pairing listeners found.");
-        println!("Run `yoop trust pair --listen` on the other device, then try again.");
+        if json {
+            output_candidates_json("no_devices", &candidates)?;
+        } else {
+            println!("No pairing listeners found.");
+            println!("Run `yoop trust pair --listen` on the other device, then try again.");
+        }
         return Ok(());
     }
 
-    display_candidates(&candidates);
-    let selected = choose_candidate(&candidates)?;
+    let selected = if json {
+        match choose_json_candidate(&candidates) {
+            Ok(selected) => selected,
+            Err(error) => {
+                output_candidates_json("selection_required", &candidates)?;
+                return Err(error);
+            }
+        }
+    } else {
+        display_candidates(&candidates);
+        choose_candidate(&candidates)?
+    };
+
     pair_with_address(
         trust_store,
         candidates[selected].address,
@@ -464,6 +474,16 @@ fn choose_candidate(candidates: &[PairingCandidate]) -> Result<usize> {
     }
 }
 
+fn choose_json_candidate(candidates: &[PairingCandidate]) -> Result<usize> {
+    match candidates.len() {
+        1 => Ok(0),
+        0 => bail!("No pairing listeners found."),
+        count => bail!(
+            "Found {count} pairing listeners. Run without --json to choose interactively, or pass --host IP:PORT."
+        ),
+    }
+}
+
 fn display_pairing_identity(title: &str, peer: &PairingIdentity) {
     println!();
     println!("{title}:");
@@ -560,10 +580,11 @@ fn output_pairing_success(peer: &PairingIdentity, json: bool) -> Result<()> {
     Ok(())
 }
 
-fn output_candidates_json(candidates: &[PairingCandidate]) -> Result<()> {
+fn output_candidates_json(status: &str, candidates: &[PairingCandidate]) -> Result<()> {
     println!(
         "{}",
         serde_json::to_string_pretty(&serde_json::json!({
+            "status": status,
             "devices": candidates.iter().map(|candidate| serde_json::json!({
                 "name": candidate.device_name,
                 "address": candidate.address.to_string(),
@@ -572,4 +593,35 @@ fn output_candidates_json(candidates: &[PairingCandidate]) -> Result<()> {
         }))?
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{IpAddr, Ipv4Addr};
+
+    fn candidate(port: u16) -> PairingCandidate {
+        PairingCandidate {
+            device_name: format!("device-{port}"),
+            address: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port),
+            source: "test".to_string(),
+        }
+    }
+
+    #[test]
+    fn json_scan_selects_single_candidate() {
+        let candidates = vec![candidate(17777)];
+
+        assert_eq!(choose_json_candidate(&candidates).unwrap(), 0);
+    }
+
+    #[test]
+    fn json_scan_requires_explicit_selection_for_multiple_candidates() {
+        let candidates = vec![candidate(17777), candidate(17778)];
+
+        let error = choose_json_candidate(&candidates).unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Run without --json to choose interactively"));
+    }
 }

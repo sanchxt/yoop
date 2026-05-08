@@ -25,6 +25,8 @@ use crate::protocol::{
 };
 use crate::{DEFAULT_DISCOVERY_PORT, DEFAULT_PAIRING_PORT, DEFAULT_TRANSFER_PORT_START};
 
+const PAIRING_HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Pairing runtime configuration.
 #[derive(Debug, Clone)]
 pub struct PairingConfig {
@@ -142,9 +144,9 @@ impl PairingListener {
                 .clone(),
         ));
 
-        let mut tls_stream = acceptor
-            .accept(stream)
+        let mut tls_stream = timeout(PAIRING_HANDSHAKE_TIMEOUT, acceptor.accept(stream))
             .await
+            .map_err(|_| Error::Timeout(PAIRING_HANDSHAKE_TIMEOUT.as_secs()))?
             .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
 
         let nonce = send_pairing_hello(
@@ -155,7 +157,8 @@ impl PairingListener {
         )
         .await?;
 
-        let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
+        let (header, payload) =
+            protocol::read_frame_with_timeout(&mut tls_stream, PAIRING_HANDSHAKE_TIMEOUT).await?;
         if header.message_type != MessageType::PairingAck {
             return Err(Error::UnexpectedMessage {
                 expected: "PairingAck".to_string(),
@@ -275,7 +278,8 @@ impl PendingClientPairing {
         let payload = protocol::encode_payload(&ack)?;
         protocol::write_frame(&mut self.stream, MessageType::PairingAck, &payload).await?;
 
-        let (header, payload) = protocol::read_frame(&mut self.stream).await?;
+        let (header, payload) =
+            protocol::read_frame_with_timeout(&mut self.stream, PAIRING_HANDSHAKE_TIMEOUT).await?;
         if header.message_type != MessageType::PairingResult {
             return Err(Error::UnexpectedMessage {
                 expected: "PairingResult".to_string(),
@@ -319,7 +323,9 @@ impl PendingClientPairing {
 pub async fn connect(addr: SocketAddr, config: PairingConfig) -> Result<PendingClientPairing> {
     validate_trust_port(config.trust_port)?;
 
-    let stream = TcpStream::connect(addr).await?;
+    let stream = timeout(PAIRING_HANDSHAKE_TIMEOUT, TcpStream::connect(addr))
+        .await
+        .map_err(|_| Error::Timeout(PAIRING_HANDSHAKE_TIMEOUT.as_secs()))??;
     let connector = TlsConnector::from(Arc::new(
         TlsConfig::client()?
             .client_config()
@@ -327,12 +333,16 @@ pub async fn connect(addr: SocketAddr, config: PairingConfig) -> Result<PendingC
             .clone(),
     ));
 
-    let mut tls_stream = connector
-        .connect("localhost".try_into().unwrap(), stream)
-        .await
-        .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
+    let mut tls_stream = timeout(
+        PAIRING_HANDSHAKE_TIMEOUT,
+        connector.connect("localhost".try_into().unwrap(), stream),
+    )
+    .await
+    .map_err(|_| Error::Timeout(PAIRING_HANDSHAKE_TIMEOUT.as_secs()))?
+    .map_err(|e| Error::TlsError(format!("TLS handshake failed: {e}")))?;
 
-    let (header, payload) = protocol::read_frame(&mut tls_stream).await?;
+    let (header, payload) =
+        protocol::read_frame_with_timeout(&mut tls_stream, PAIRING_HANDSHAKE_TIMEOUT).await?;
     if header.message_type != MessageType::PairingHello {
         return Err(Error::UnexpectedMessage {
             expected: "PairingHello".to_string(),
