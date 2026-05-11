@@ -1079,14 +1079,12 @@ impl App {
             Action::AddFiles(files) => {
                 self.state.share.selected_files.extend(files);
             }
-            Action::RemoveFile(index) => {
-                if index < self.state.share.selected_files.len() {
-                    self.state.share.selected_files.remove(index);
-                    if self.state.share.selected_index >= self.state.share.selected_files.len()
-                        && self.state.share.selected_index > 0
-                    {
-                        self.state.share.selected_index -= 1;
-                    }
+            Action::RemoveFile(index) if index < self.state.share.selected_files.len() => {
+                self.state.share.selected_files.remove(index);
+                if self.state.share.selected_index >= self.state.share.selected_files.len()
+                    && self.state.share.selected_index > 0
+                {
+                    self.state.share.selected_index -= 1;
                 }
             }
             Action::ToggleFile(index) => {

@@ -134,7 +134,7 @@ async fn run_share(_args: super::ClipboardShareArgs, quiet: bool, json: bool) ->
                     "error": format!("{}", e),
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
-            } else if !quiet {
+            } else if !quiet && !json {
                 eprintln!("  Error: {}", e);
             }
             Err(e.into())
@@ -627,10 +627,10 @@ async fn run_sync_trusted_device_once(
         println!("{}", serde_json::to_string_pretty(&output)?);
     }
 
-    let (session, runner) = match ClipboardSyncSession::connect_trusted(&device, config).await {
+    let (session, runner) = match ClipboardSyncSession::connect_trusted(device, config).await {
         Ok(s) => s,
         Err(e) => {
-            if json {
+            if json && clear_state_on_end {
                 let output = serde_json::json!({
                     "status": "error",
                     "error": format!("{}", e),
@@ -840,7 +840,7 @@ async fn run_sync_session(
                 }
             }
 
-            if json {
+            if json && clear_state_on_end {
                 let output = serde_json::json!({
                     "status": "complete",
                     "stats": {
@@ -852,7 +852,7 @@ async fn run_sync_session(
                     },
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
-            } else if !quiet {
+            } else if !quiet && !json {
                 println!();
                 println!("  Sync session ended.");
                 println!(
@@ -874,13 +874,13 @@ async fn run_sync_session(
             Ok(())
         }
         Err(e) => {
-            if json {
+            if json && clear_state_on_end {
                 let output = serde_json::json!({
                     "status": "error",
                     "error": format!("{}", e),
                 });
                 println!("{}", serde_json::to_string_pretty(&output)?);
-            } else if !quiet {
+            } else if !quiet && !json {
                 eprintln!("  Sync error: {}", e);
             }
             if clear_state_on_end {
