@@ -770,10 +770,9 @@ impl ShareSession {
                                 (progress.total_bytes_transferred as f64 / elapsed) as u64;
                         }
                         let remaining = progress.total_bytes - progress.total_bytes_transferred;
-                        if progress.speed_bps > 0 {
-                            progress.eta =
-                                Some(Duration::from_secs(remaining / progress.speed_bps));
-                        }
+                        progress.eta = remaining
+                            .checked_div(progress.speed_bps)
+                            .map(Duration::from_secs);
                     }
                     let _ = self.progress_tx.send(progress);
                 }
@@ -1602,10 +1601,9 @@ impl ReceiveSession {
                                     (progress.total_bytes_transferred as f64 / elapsed) as u64;
                             }
                             let remaining = progress.total_bytes - progress.total_bytes_transferred;
-                            if progress.speed_bps > 0 {
-                                progress.eta =
-                                    Some(Duration::from_secs(remaining / progress.speed_bps));
-                            }
+                            progress.eta = remaining
+                                .checked_div(progress.speed_bps)
+                                .map(Duration::from_secs);
                         }
                         let _ = self.progress_tx.send(progress);
                     }
@@ -2062,9 +2060,9 @@ impl ReceiveSession {
                 progress.speed_bps = (progress.total_bytes_transferred as f64 / elapsed) as u64;
             }
             let remaining = progress.total_bytes - progress.total_bytes_transferred;
-            if progress.speed_bps > 0 {
-                progress.eta = Some(Duration::from_secs(remaining / progress.speed_bps));
-            }
+            progress.eta = remaining
+                .checked_div(progress.speed_bps)
+                .map(Duration::from_secs);
         }
         let _ = self.progress_tx.send(progress);
         Ok(())
