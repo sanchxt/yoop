@@ -308,9 +308,9 @@ pub enum TrustAction {
         #[arg(long, default_value_t = yoop_core::DEFAULT_TRANSFER_PORT_START)]
         trust_port: u16,
 
-        /// Trust level to store (full, ask)
-        #[arg(long, default_value = "full")]
-        level: String,
+        /// Trust level to store (full, ask). Defaults to full in non-interactive mode.
+        #[arg(long)]
+        level: Option<String>,
 
         /// Accept prompts automatically
         #[arg(short = 'y', long)]

@@ -119,7 +119,7 @@ struct PairArgs {
     scan: String,
     port: u16,
     trust_port: u16,
-    level: String,
+    level: Option<String>,
     yes: bool,
     json: bool,
 }
@@ -142,7 +142,7 @@ async fn run_pair(trust_store: &mut TrustStore, args: PairArgs) -> Result<()> {
         return run_pair_listener(
             trust_store,
             pairing_config,
-            &args.level,
+            args.level.as_deref(),
             args.yes,
             args.json,
         )
@@ -155,7 +155,7 @@ async fn run_pair(trust_store: &mut TrustStore, args: PairArgs) -> Result<()> {
             trust_store,
             addr,
             pairing_config,
-            &args.level,
+            args.level.as_deref(),
             args.yes,
             args.json,
         )
@@ -166,7 +166,7 @@ async fn run_pair(trust_store: &mut TrustStore, args: PairArgs) -> Result<()> {
         trust_store,
         pairing_config,
         &args.scan,
-        &args.level,
+        args.level.as_deref(),
         args.yes,
         args.json,
     )
@@ -176,7 +176,7 @@ async fn run_pair(trust_store: &mut TrustStore, args: PairArgs) -> Result<()> {
 async fn run_pair_listener(
     trust_store: &mut TrustStore,
     pairing_config: PairingConfig,
-    level: &str,
+    level: Option<&str>,
     yes: bool,
     json: bool,
 ) -> Result<()> {
@@ -222,7 +222,7 @@ async fn run_pair_listener(
             display_pairing_identity("Incoming pairing request", &peer);
         }
 
-        let accepted = yes || prompt_yes_no("Trust this device?", true)?;
+        let accepted = yes || json || prompt_yes_no("Trust this device?", true)?;
         if !accepted {
             let _ = pending
                 .finish(false, Some("rejected by user".to_string()))
@@ -233,7 +233,7 @@ async fn run_pair_listener(
             continue;
         }
 
-        let trust_level = choose_trust_level(level, yes)?;
+        let trust_level = choose_trust_level(level, yes || json)?;
         let peer = pending.finish(true, None).await?;
         save_trusted_peer(trust_store, &peer, trust_level)?;
         output_pairing_success(&peer, json)?;
@@ -248,7 +248,7 @@ async fn run_pair_scan(
     trust_store: &mut TrustStore,
     pairing_config: PairingConfig,
     scan: &str,
-    level: &str,
+    level: Option<&str>,
     yes: bool,
     json: bool,
 ) -> Result<()> {
@@ -303,7 +303,7 @@ async fn pair_with_address(
     trust_store: &mut TrustStore,
     addr: SocketAddr,
     pairing_config: PairingConfig,
-    level: &str,
+    level: Option<&str>,
     yes: bool,
     json: bool,
 ) -> Result<()> {
@@ -314,7 +314,7 @@ async fn pair_with_address(
         display_pairing_identity("Found pairing device", &peer);
     }
 
-    let accepted = yes || prompt_yes_no("Trust this device?", true)?;
+    let accepted = yes || json || prompt_yes_no("Trust this device?", true)?;
     if !accepted {
         pending.reject("rejected by user").await?;
         if !json {
@@ -323,7 +323,7 @@ async fn pair_with_address(
         return Ok(());
     }
 
-    let trust_level = choose_trust_level(level, yes)?;
+    let trust_level = choose_trust_level(level, yes || json)?;
     let peer = pending.accept().await?;
     save_trusted_peer(trust_store, &peer, trust_level)?;
     output_pairing_success(&peer, json)
@@ -509,9 +509,13 @@ fn prompt_yes_no(question: &str, default_yes: bool) -> Result<bool> {
     Ok(input == "y" || input == "yes")
 }
 
-fn choose_trust_level(level: &str, yes: bool) -> Result<TrustLevel> {
-    if yes {
+fn choose_trust_level(level: Option<&str>, non_interactive: bool) -> Result<TrustLevel> {
+    if let Some(level) = level {
         return parse_trust_level(level);
+    }
+
+    if non_interactive {
+        return Ok(TrustLevel::Full);
     }
 
     println!("  Trust level:");
@@ -623,5 +627,21 @@ mod tests {
         assert!(error
             .to_string()
             .contains("Run without --json to choose interactively"));
+    }
+
+    #[test]
+    fn trust_level_honors_explicit_level_without_yes() {
+        assert!(matches!(
+            choose_trust_level(Some("ask"), false).unwrap(),
+            TrustLevel::AskEachTime
+        ));
+    }
+
+    #[test]
+    fn trust_level_defaults_to_full_in_non_interactive_mode() {
+        assert!(matches!(
+            choose_trust_level(None, true).unwrap(),
+            TrustLevel::Full
+        ));
     }
 }
