@@ -429,8 +429,7 @@ fn validate_identity(
     let derived_device_id = DeviceIdentity::derive_device_id_from_public_key_base64(public_key)?;
     if derived_device_id != device_id {
         return Err(Error::TrustError(format!(
-            "Device ID mismatch: expected derived ID {}, got {}",
-            derived_device_id, device_id
+            "Device ID mismatch: expected derived ID {derived_device_id}, got {device_id}"
         )));
     }
 
