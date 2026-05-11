@@ -133,10 +133,9 @@ impl StatusBar {
         let total: u64 = transfers.iter().map(|t| t.progress.total).sum();
         let transferred: u64 = transfers.iter().map(|t| t.progress.transferred).sum();
 
-        if total == 0 {
-            0
-        } else {
-            ((transferred * 100) / total) as u8
-        }
+        transferred
+            .saturating_mul(100)
+            .checked_div(total)
+            .map_or(0, |progress| progress as u8)
     }
 }

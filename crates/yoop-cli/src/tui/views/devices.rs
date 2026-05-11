@@ -459,8 +459,7 @@ impl DevicesView {
             for device in store.list() {
                 let is_online = now
                     .duration_since(device.last_seen)
-                    .map(|d| d.as_secs() < 300)
-                    .unwrap_or(false);
+                    .is_ok_and(|d| d.as_secs() < 300);
 
                 let trust_level = match device.trust_level {
                     yoop_core::config::TrustLevel::Full => "Full".to_string(),
