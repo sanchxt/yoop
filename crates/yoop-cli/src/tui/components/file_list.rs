@@ -120,7 +120,7 @@ impl FileList {
         let size = if is_dir {
             calculate_dir_size(path).unwrap_or(0)
         } else {
-            std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+            std::fs::metadata(path).map_or(0, |m| m.len())
         };
 
         let icon = if is_dir { "/" } else { "" };
@@ -168,7 +168,7 @@ fn calculate_total_size(files: &[PathBuf]) -> u64 {
             if path.is_dir() {
                 calculate_dir_size(path).unwrap_or(0)
             } else {
-                std::fs::metadata(path).map(|m| m.len()).unwrap_or(0)
+                std::fs::metadata(path).map_or(0, |m| m.len())
             }
         })
         .sum()

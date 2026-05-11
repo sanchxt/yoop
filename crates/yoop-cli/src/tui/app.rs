@@ -1293,15 +1293,14 @@ impl App {
             Action::AddExcludePattern(pattern) => {
                 self.state.sync.exclude_patterns.push(pattern);
             }
-            Action::RemoveExcludePattern(index) => {
-                if index < self.state.sync.exclude_patterns.len() {
-                    self.state.sync.exclude_patterns.remove(index);
-                    if self.state.sync.selected_pattern_index
-                        >= self.state.sync.exclude_patterns.len()
-                    {
-                        self.state.sync.selected_pattern_index =
-                            self.state.sync.exclude_patterns.len().saturating_sub(1);
-                    }
+            Action::RemoveExcludePattern(index)
+                if index < self.state.sync.exclude_patterns.len() =>
+            {
+                self.state.sync.exclude_patterns.remove(index);
+                if self.state.sync.selected_pattern_index >= self.state.sync.exclude_patterns.len()
+                {
+                    self.state.sync.selected_pattern_index =
+                        self.state.sync.exclude_patterns.len().saturating_sub(1);
                 }
             }
             Action::StartAddExcludePattern => {
@@ -1327,10 +1326,8 @@ impl App {
                 self.state.sync.focus = super::state::SyncFocus::ExcludePatterns;
             }
 
-            Action::SelectDeviceIndex(index) => {
-                if index < self.views.devices.devices.len() {
-                    self.state.devices.selected_index = index;
-                }
+            Action::SelectDeviceIndex(index) if index < self.views.devices.devices.len() => {
+                self.state.devices.selected_index = index;
             }
             Action::CycleTrustLevel => {
                 if let Some(device) = self.views.devices.get_selected_device(&self.state) {
@@ -1386,10 +1383,8 @@ impl App {
                 self.log_info("Devices list refreshed");
             }
 
-            Action::SelectHistoryIndex(index) => {
-                if index < self.views.history.entries.len() {
-                    self.state.history.selected_index = index;
-                }
+            Action::SelectHistoryIndex(index) if index < self.views.history.entries.len() => {
+                self.state.history.selected_index = index;
             }
             Action::ViewHistoryDetails => {
                 self.state.history.focus = super::state::HistoryFocus::Details;
@@ -1463,23 +1458,25 @@ impl App {
                     self.state.config.selected_setting = 0;
                 }
             }
-            Action::SelectConfigSectionIndex(index) => {
-                if index < super::state::ConfigSection::all().len() {
-                    self.state.config.selected_section = index;
-                    self.state.config.selected_setting = 0;
-                }
+            Action::SelectConfigSectionIndex(index)
+                if index < super::state::ConfigSection::all().len() =>
+            {
+                self.state.config.selected_section = index;
+                self.state.config.selected_setting = 0;
             }
-            Action::SelectConfigSetting(index) => {
-                if let Some(settings) = self.views.config.current_settings(&self.state.config) {
-                    if index < settings.len() {
-                        self.state.config.selected_setting = index;
-                    }
-                }
+            Action::SelectConfigSetting(index)
+                if self
+                    .views
+                    .config
+                    .current_settings(&self.state.config)
+                    .is_some_and(|settings| index < settings.len()) =>
+            {
+                self.state.config.selected_setting = index;
             }
-            Action::StartEditSetting => {
-                if self.state.config.focus == super::state::ConfigFocus::Settings {
-                    self.views.config.start_edit(&mut self.state.config);
-                }
+            Action::StartEditSetting
+                if self.state.config.focus == super::state::ConfigFocus::Settings =>
+            {
+                self.views.config.start_edit(&mut self.state.config);
             }
             Action::UpdateEditBuffer(s) => {
                 self.state.config.edit_buffer = s;

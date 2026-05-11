@@ -225,7 +225,7 @@ impl ShareView {
 
         let total_size: u64 = files
             .iter()
-            .map(|p| std::fs::metadata(p).map(|m| m.len()).unwrap_or(0))
+            .map(|p| std::fs::metadata(p).map_or(0, |m| m.len()))
             .sum();
 
         let file_names: Vec<String> = files
