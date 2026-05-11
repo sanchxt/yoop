@@ -128,7 +128,7 @@ impl BackupManager {
                 })?;
 
                 backed_up_files.push((*file_name).to_string());
-                total_size += fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+                total_size += fs::metadata(&dest).map_or(0, |m| m.len());
             }
         }
 
@@ -221,9 +221,7 @@ impl BackupManager {
             return Ok(0);
         }
 
-        manifest
-            .backups
-            .sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+        manifest.backups.sort_by_key(|backup| backup.timestamp);
 
         let to_remove = manifest.backups.len() - self.max_backups;
         let removed_backups: Vec<_> = manifest.backups.drain(..to_remove).collect();
