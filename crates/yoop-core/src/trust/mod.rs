@@ -374,7 +374,7 @@ impl TrustStore {
             .iter()
             .filter(|d| d.last_known_ip.is_some() && d.last_known_port.is_some())
             .collect();
-        devices.sort_by(|a, b| b.last_seen.cmp(&a.last_seen));
+        devices.sort_by_key(|device| std::cmp::Reverse(device.last_seen));
         devices
     }
 }
