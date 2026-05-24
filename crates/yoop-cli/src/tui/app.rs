@@ -300,9 +300,7 @@ impl App {
         }
 
         if let Some(sync) = cli_clipboard_sync {
-            if self.state.clipboard_sync.is_none() {
-                self.state.clipboard_sync = Some(sync);
-            }
+            self.state.clipboard_sync = Some(sync);
         }
     }
 
