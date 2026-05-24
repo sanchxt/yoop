@@ -70,6 +70,10 @@ pub fn apply_permissions(path: &Path, permissions: Option<u32>) -> Result<()> {
 /// Apply Unix file permissions to a file.
 ///
 /// No-op on non-Unix platforms.
+///
+/// # Errors
+///
+/// This function does not currently return errors on non-Unix platforms.
 #[cfg(not(unix))]
 pub fn apply_permissions(_path: &Path, _permissions: Option<u32>) -> Result<()> {
     Ok(())
