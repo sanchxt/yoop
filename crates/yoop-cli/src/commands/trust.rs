@@ -222,7 +222,15 @@ async fn run_pair_listener(
             display_pairing_identity("Incoming pairing request", &peer);
         }
 
-        let accepted = yes || json || prompt_yes_no("Trust this device?", true)?;
+        if json && !yes {
+            let reason = "approval required; rerun with --yes to accept in JSON mode";
+            let _ = pending.finish(false, Some(reason.to_string())).await;
+            output_pairing_approval_required(&peer)?;
+            listener.shutdown().await;
+            bail!(reason);
+        }
+
+        let accepted = yes || prompt_yes_no("Trust this device?", true)?;
         if !accepted {
             let _ = pending
                 .finish(false, Some("rejected by user".to_string()))
@@ -233,7 +241,7 @@ async fn run_pair_listener(
             continue;
         }
 
-        let trust_level = choose_trust_level(level, yes || json)?;
+        let trust_level = choose_trust_level(level, yes)?;
         let peer = pending.finish(true, None).await?;
         save_trusted_peer(trust_store, &peer, trust_level)?;
         output_pairing_success(&peer, json)?;
@@ -314,7 +322,15 @@ async fn pair_with_address(
         display_pairing_identity("Found pairing device", &peer);
     }
 
-    let accepted = yes || json || prompt_yes_no("Trust this device?", true)?;
+    if json && !yes {
+        pending
+            .reject("approval required; rerun with --yes to accept in JSON mode")
+            .await?;
+        output_pairing_approval_required(&peer)?;
+        bail!("approval required; rerun with --yes to accept in JSON mode");
+    }
+
+    let accepted = yes || prompt_yes_no("Trust this device?", true)?;
     if !accepted {
         pending.reject("rejected by user").await?;
         if !json {
@@ -323,7 +339,7 @@ async fn pair_with_address(
         return Ok(());
     }
 
-    let trust_level = choose_trust_level(level, yes || json)?;
+    let trust_level = choose_trust_level(level, yes)?;
     let peer = pending.accept().await?;
     save_trusted_peer(trust_store, &peer, trust_level)?;
     output_pairing_success(&peer, json)
@@ -581,6 +597,20 @@ fn output_pairing_success(peer: &PairingIdentity, json: bool) -> Result<()> {
         println!();
     }
 
+    Ok(())
+}
+
+fn output_pairing_approval_required(peer: &PairingIdentity) -> Result<()> {
+    println!(
+        "{}",
+        serde_json::to_string_pretty(&serde_json::json!({
+            "status": "approval_required",
+            "device": peer.device_name,
+            "device_id": peer.device_id.to_string(),
+            "address": peer.address.to_string(),
+            "hint": "rerun with --yes to accept in JSON mode",
+        }))?
+    );
     Ok(())
 }
 

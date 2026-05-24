@@ -37,6 +37,8 @@ pub mod txt_keys {
     pub const TOTAL_SIZE: &str = "total_size";
     /// Protocol version key
     pub const VERSION: &str = "version";
+    /// Supported capability list key
+    pub const SUPPORTS: &str = "supports";
 }
 
 /// Properties for mDNS service registration.
@@ -56,6 +58,8 @@ pub struct MdnsProperties {
     pub total_size: u64,
     /// Protocol version
     pub protocol_version: String,
+    /// Supported capabilities
+    pub supports: Vec<String>,
 }
 
 impl MdnsProperties {
@@ -69,6 +73,7 @@ impl MdnsProperties {
             (txt_keys::FILE_COUNT, self.file_count.to_string()),
             (txt_keys::TOTAL_SIZE, self.total_size.to_string()),
             (txt_keys::VERSION, self.protocol_version.clone()),
+            (txt_keys::SUPPORTS, self.supports.join(",")),
         ]
     }
 }
@@ -92,6 +97,8 @@ pub struct MdnsDiscoveredShare {
     pub total_size: u64,
     /// Protocol version
     pub protocol_version: String,
+    /// Supported capabilities
+    pub supports: Vec<String>,
 }
 
 impl MdnsDiscoveredShare {
@@ -112,6 +119,17 @@ impl MdnsDiscoveredShare {
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
         let protocol_version = get_str(txt_keys::VERSION).unwrap_or_else(|| "1.0".to_string());
+        let supports = get_str(txt_keys::SUPPORTS).map_or_else(
+            || vec!["tcp".to_string()],
+            |value| {
+                value
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|support| !support.is_empty())
+                    .map(ToString::to_string)
+                    .collect()
+            },
+        );
 
         let addresses = info.get_addresses();
         let ip = addresses.iter().find(|addr| addr.is_ipv4())?;
@@ -126,6 +144,7 @@ impl MdnsDiscoveredShare {
             file_count,
             total_size,
             protocol_version,
+            supports,
         })
     }
 }
@@ -497,14 +516,19 @@ mod tests {
             file_count: 5,
             total_size: 1_024_000,
             protocol_version: "1.0".to_string(),
+            supports: vec!["tcp".to_string(), "pairing".to_string()],
         };
 
         let txt = props.to_txt_properties();
-        assert_eq!(txt.len(), 6);
+        assert_eq!(txt.len(), 7);
 
         let code_prop = txt.iter().find(|(k, _)| *k == txt_keys::CODE);
         assert!(code_prop.is_some());
         assert_eq!(code_prop.unwrap().1, "TEST-123");
+
+        let supports_prop = txt.iter().find(|(k, _)| *k == txt_keys::SUPPORTS);
+        assert!(supports_prop.is_some());
+        assert_eq!(supports_prop.unwrap().1, "tcp,pairing");
     }
 
     #[test]
