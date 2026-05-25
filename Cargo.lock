@@ -3852,7 +3852,7 @@ dependencies = [
 
 [[package]]
 name = "yoop"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -3878,7 +3878,7 @@ dependencies = [
 
 [[package]]
 name = "yoop-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "arboard",
  "async-stream",
