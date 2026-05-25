@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1](https://github.com/sanchxt/yoop/compare/v0.2.0...v0.2.1) (2026-05-25)
+
+
+### Features
+
+* **trust:** add fileless device pairing ([655463c](https://github.com/sanchxt/yoop/commit/655463c406773d117c1cbb023c6eec3bb28aaf45))
+
+
+### Bug Fixes
+
+* **clipboard:** avoid sync event backpressure ([274117d](https://github.com/sanchxt/yoop/commit/274117dc9d2b119b2138874fca2c53e29c34a6c9))
+* **clipboard:** keep trusted sync alive ([ef2c1d9](https://github.com/sanchxt/yoop/commit/ef2c1d90c42bdbcd9970ccb7da1f70acddddf6f2))
+
 ## [0.2.0](https://github.com/sanchxt/yoop/compare/v0.1.6...v0.2.0) (2026-02-01)
 
 
