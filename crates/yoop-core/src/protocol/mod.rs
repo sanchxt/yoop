@@ -113,6 +113,12 @@ pub enum MessageType {
     SyncComplete = 0x78,
     /// Sync: Status update
     SyncStatus = 0x79,
+    /// Pairing identity hello
+    PairingHello = 0x80,
+    /// Pairing identity acknowledgment
+    PairingAck = 0x81,
+    /// Pairing final result
+    PairingResult = 0x82,
     /// Error message
     Error = 0xFF,
 }
@@ -157,6 +163,9 @@ impl MessageType {
             0x77 => Some(Self::SyncChunkAck),
             0x78 => Some(Self::SyncComplete),
             0x79 => Some(Self::SyncStatus),
+            0x80 => Some(Self::PairingHello),
+            0x81 => Some(Self::PairingAck),
+            0x82 => Some(Self::PairingResult),
             0xFF => Some(Self::Error),
             _ => None,
         }
@@ -476,6 +485,68 @@ pub struct TrustedVerifyAckPayload {
     /// Reason if not confirmed
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
+}
+
+/// Pairing identity hello payload.
+///
+/// Sent by a pairing listener to expose only device identity metadata. It does
+/// not offer or transfer files.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingHelloPayload {
+    /// Device name
+    pub device_name: String,
+    /// Protocol version string
+    pub protocol_version: String,
+    /// Unique device identifier
+    pub device_id: uuid::Uuid,
+    /// Base64-encoded Ed25519 public key
+    pub public_key: String,
+    /// Random nonce for challenge (32 bytes, base64-encoded)
+    pub nonce: String,
+    /// Ed25519 signature of the nonce using sender's private key
+    pub nonce_signature: String,
+    /// Port this device expects trusted direct connections to use
+    pub trust_port: u16,
+}
+
+/// Pairing acknowledgment payload.
+///
+/// Sent by the joining device after it has inspected and accepted or rejected
+/// the pairing listener identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingAckPayload {
+    /// Whether the listener identity was accepted
+    pub accepted: bool,
+    /// Device name, if accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_name: Option<String>,
+    /// Unique device identifier, if accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub device_id: Option<uuid::Uuid>,
+    /// Base64-encoded Ed25519 public key, if accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    /// Ed25519 signature of the listener nonce, if accepted
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce_signature: Option<String>,
+    /// Port this device expects trusted direct connections to use
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trust_port: Option<u16>,
+    /// Error message if rejected
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// Pairing final result payload.
+///
+/// Sent by the listener after inspecting the joining device identity.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingResultPayload {
+    /// Whether the joining device was accepted
+    pub accepted: bool,
+    /// Error message if rejected
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// Sync: Initial sync handshake payload.
@@ -1161,6 +1232,66 @@ mod tests {
         assert_eq!(
             MessageType::from_byte(0x63),
             Some(MessageType::TrustedVerifyAck)
+        );
+    }
+
+    #[test]
+    fn test_pairing_payload_serialization() {
+        let device_id = uuid::Uuid::new_v4();
+        let hello = PairingHelloPayload {
+            device_name: "Pairing Device".to_string(),
+            protocol_version: "1.0".to_string(),
+            device_id,
+            public_key: "public_key".to_string(),
+            nonce: "nonce".to_string(),
+            nonce_signature: "signature".to_string(),
+            trust_port: 52530,
+        };
+
+        let encoded = encode_payload(&hello).expect("encode hello");
+        let decoded: PairingHelloPayload = decode_payload(&encoded).expect("decode hello");
+
+        assert_eq!(decoded.device_name, hello.device_name);
+        assert_eq!(decoded.device_id, device_id);
+        assert_eq!(decoded.trust_port, 52530);
+
+        let ack = PairingAckPayload {
+            accepted: true,
+            device_name: Some("Peer".to_string()),
+            device_id: Some(device_id),
+            public_key: Some("peer_key".to_string()),
+            nonce_signature: Some("peer_signature".to_string()),
+            trust_port: Some(52530),
+            error: None,
+        };
+
+        let encoded = encode_payload(&ack).expect("encode ack");
+        let decoded: PairingAckPayload = decode_payload(&encoded).expect("decode ack");
+
+        assert!(decoded.accepted);
+        assert_eq!(decoded.device_name, Some("Peer".to_string()));
+        assert_eq!(decoded.trust_port, Some(52530));
+
+        let result = PairingResultPayload {
+            accepted: true,
+            error: None,
+        };
+        let encoded = encode_payload(&result).expect("encode result");
+        let decoded: PairingResultPayload = decode_payload(&encoded).expect("decode result");
+
+        assert!(decoded.accepted);
+    }
+
+    #[test]
+    fn test_pairing_message_types() {
+        assert_eq!(
+            MessageType::from_byte(0x80),
+            Some(MessageType::PairingHello)
+        );
+        assert_eq!(MessageType::from_byte(0x81), Some(MessageType::PairingAck));
+        assert_eq!(
+            MessageType::from_byte(0x82),
+            Some(MessageType::PairingResult)
         );
     }
 

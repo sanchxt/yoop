@@ -286,6 +286,41 @@ pub enum TrustAction {
     /// List trusted devices
     List,
 
+    /// Pair with another device without transferring files
+    Pair {
+        /// Listen for one incoming pairing request
+        #[arg(long)]
+        listen: bool,
+
+        /// Pair directly with a host IP or IP:PORT
+        #[arg(long, value_name = "IP[:PORT]")]
+        host: Option<String>,
+
+        /// Duration to scan for pairing listeners
+        #[arg(long, default_value = "5s")]
+        scan: String,
+
+        /// TCP port used for the pairing handshake
+        #[arg(long, default_value_t = yoop_core::DEFAULT_PAIRING_PORT)]
+        port: u16,
+
+        /// TCP port to store for future trusted connections
+        #[arg(long, default_value_t = yoop_core::DEFAULT_TRANSFER_PORT_START)]
+        trust_port: u16,
+
+        /// Trust level to store (full, ask). Defaults to full in non-interactive mode.
+        #[arg(long)]
+        level: Option<String>,
+
+        /// Accept prompts automatically
+        #[arg(short = 'y', long)]
+        yes: bool,
+
+        /// Output machine-readable JSON
+        #[arg(long)]
+        json: bool,
+    },
+
     /// Remove a trusted device
     Remove {
         /// Device name or ID

@@ -97,6 +97,7 @@ impl HybridBroadcaster {
                 file_count: packet.file_count,
                 total_size: packet.total_size,
                 protocol_version: packet.version.clone(),
+                supports: packet.supports.clone(),
             };
 
             if let Err(e) = mdns.register(properties).await {
@@ -411,7 +412,7 @@ fn mdns_to_discovered(mdns_share: MdnsDiscoveredShare) -> DiscoveredShare {
             device_id: mdns_share.device_id,
             expires_at: 0,
             transfer_port: mdns_share.transfer_port,
-            supports: vec!["tcp".to_string()],
+            supports: mdns_share.supports,
             file_count: mdns_share.file_count,
             total_size: mdns_share.total_size,
             preview_available: true,

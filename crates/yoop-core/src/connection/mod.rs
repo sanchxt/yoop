@@ -35,6 +35,16 @@ use crate::transfer::DEFAULT_TRANSFER_PORT;
 ///
 /// Returns an error if the host string cannot be parsed.
 pub fn parse_host_address(host: &str) -> Result<SocketAddr> {
+    parse_host_address_with_default_port(host, DEFAULT_TRANSFER_PORT)
+}
+
+/// Parse a host address string into a `SocketAddr`, using `default_port` when
+/// the input contains only an IP address.
+///
+/// # Errors
+///
+/// Returns an error if the host string cannot be parsed.
+pub fn parse_host_address_with_default_port(host: &str, default_port: u16) -> Result<SocketAddr> {
     let host = host.trim();
 
     if let Ok(addr) = host.parse::<SocketAddr>() {
@@ -48,11 +58,11 @@ pub fn parse_host_address(host: &str) -> Result<SocketAddr> {
                 "Invalid host format '{host}'. Use IP or IP:PORT (e.g., 192.168.1.100 or 192.168.1.100:52530)"
             ))
         })?;
-        return Ok(SocketAddr::new(ip, DEFAULT_TRANSFER_PORT));
+        return Ok(SocketAddr::new(ip, default_port));
     }
 
     if let Ok(ip) = host.parse::<IpAddr>() {
-        return Ok(SocketAddr::new(ip, DEFAULT_TRANSFER_PORT));
+        return Ok(SocketAddr::new(ip, default_port));
     }
 
     if let Some((ip_part, port_part)) = host.rsplit_once(':') {
@@ -140,5 +150,12 @@ mod tests {
     fn test_parse_host_whitespace() {
         let addr = parse_host_address("  192.168.1.100  ").unwrap();
         assert_eq!(addr.ip().to_string(), "192.168.1.100");
+    }
+
+    #[test]
+    fn test_parse_host_custom_default_port() {
+        let addr = parse_host_address_with_default_port("192.168.1.100", 52541).unwrap();
+        assert_eq!(addr.ip().to_string(), "192.168.1.100");
+        assert_eq!(addr.port(), 52541);
     }
 }

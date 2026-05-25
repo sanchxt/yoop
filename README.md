@@ -81,12 +81,12 @@ yoop clipboard sync --device "My-Mac"
 
 # First-time pairing over VPN
 # Device A:
-yoop clipboard sync
-# → Code: A7K9
+yoop trust pair --listen
 
 # Device B:
-yoop clipboard sync --host 100.103.164.32 A7K9
-# After successful connection, Device B is trusted
+yoop trust pair --host 100.103.164.32
+# Or scan Tailscale peers with pairing listeners:
+yoop trust pair
 
 # Subsequent connections (automatic):
 yoop clipboard sync --device "Device-A"
@@ -94,10 +94,11 @@ yoop clipboard sync --device "Device-A"
 
 **How it works:**
 
-1. **First connection**: Use `--host IP[:PORT]` with a share code
-2. **Trusted pairing**: After connection, devices are added to trust store with stored IP
-3. **Future connections**: Use `--device <name>` for codeless connections
-4. **Auto-fallback**: If discovery fails, automatically tries stored IP addresses
+1. **Pairing listener**: One device runs `yoop trust pair --listen`
+2. **Device discovery**: The other runs `yoop trust pair` to scan LAN and Tailscale peers, or `--host IP[:PORT]`
+3. **Trusted pairing**: Both devices exchange signed Ed25519 identities and store trusted addresses
+4. **Future connections**: Use `--device <name>` for codeless connections
+5. **Auto-fallback**: If discovery fails, automatically tries stored IP addresses
 
 **Supported on all commands:**
 
@@ -295,6 +296,13 @@ Send files directly to trusted devices without share codes:
 # First transfer: Use share code
 yoop share file.txt
 # After accepting, you'll be prompted to trust the device
+
+# Pair without transferring files
+# Device A:
+yoop trust pair --listen
+# Device B:
+yoop trust pair                    # Scan LAN + Tailscale for pairing listeners
+yoop trust pair --host 192.168.1.100
 
 # Subsequent transfers: Direct send (no code needed)
 yoop send "Device-Name" file.txt

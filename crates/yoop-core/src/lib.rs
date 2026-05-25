@@ -65,6 +65,7 @@ pub mod discovery;
 pub mod error;
 pub mod file;
 pub mod history;
+pub mod pairing;
 pub mod preview;
 pub mod protocol;
 pub mod qr;
@@ -100,6 +101,9 @@ pub const DEFAULT_TRANSFER_PORT_START: u16 = 52530;
 
 /// Default transfer port range end
 pub const DEFAULT_TRANSFER_PORT_END: u16 = 52540;
+
+/// Default trust pairing port
+pub const DEFAULT_PAIRING_PORT: u16 = 52541;
 
 /// Default code expiration time in seconds
 pub const DEFAULT_CODE_EXPIRATION_SECS: u64 = 300;

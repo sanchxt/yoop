@@ -24,11 +24,12 @@ fn test_mdns_properties_to_txt_properties() {
         file_count: 5,
         total_size: 1_024_000,
         protocol_version: "1.0".to_string(),
+        supports: vec!["tcp".to_string()],
     };
 
     let txt = props.to_txt_properties();
 
-    assert_eq!(txt.len(), 6);
+    assert_eq!(txt.len(), 7);
 
     let code_prop = txt.iter().find(|(k, _)| *k == "code");
     assert!(code_prop.is_some());
@@ -95,6 +96,7 @@ async fn test_mdns_service_registration_lifecycle() {
         file_count: 1,
         total_size: 1024,
         protocol_version: "1.0".to_string(),
+        supports: vec!["tcp".to_string()],
     };
 
     let result = broadcaster.register(props).await;
@@ -278,6 +280,7 @@ async fn test_mdns_registration_discovery_roundtrip() {
         file_count: 3,
         total_size: 4096,
         protocol_version: "1.0".to_string(),
+        supports: vec!["tcp".to_string()],
     };
 
     broadcaster.register(props).await.expect("register");
