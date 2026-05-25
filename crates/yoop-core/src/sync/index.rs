@@ -194,14 +194,15 @@ impl FileIndex {
                         content_hash: remote_entry.content_hash,
                     });
                 }
-                Some(local_entry) if local_entry.content_changed(remote_entry) => {
-                    if remote_entry.is_newer_than(local_entry) {
-                        ops.push(SyncOp::Modify {
-                            path: remote_entry.path.clone(),
-                            size: remote_entry.size,
-                            content_hash: remote_entry.content_hash,
-                        });
-                    }
+                Some(local_entry)
+                    if local_entry.content_changed(remote_entry)
+                        && remote_entry.is_newer_than(local_entry) =>
+                {
+                    ops.push(SyncOp::Modify {
+                        path: remote_entry.path.clone(),
+                        size: remote_entry.size,
+                        content_hash: remote_entry.content_hash,
+                    });
                 }
                 _ => {}
             }

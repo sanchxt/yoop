@@ -424,7 +424,10 @@ mod tests {
     static CLIPBOARD_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
+    #[cfg_attr(
+        any(windows, target_os = "macos"),
+        ignore = "clipboard access is unreliable in headless CI"
+    )]
     fn test_create_clipboard() {
         let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let result = create_clipboard();
@@ -436,7 +439,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
+    #[cfg_attr(
+        any(windows, target_os = "macos"),
+        ignore = "clipboard access is unreliable in headless CI"
+    )]
     fn test_clipboard_text_roundtrip() {
         let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let clipboard = create_clipboard();
@@ -466,7 +472,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(any(windows, target_os = "macos"), ignore)]
+    #[cfg_attr(
+        any(windows, target_os = "macos"),
+        ignore = "clipboard access is unreliable in headless CI"
+    )]
     fn test_content_hash_consistency() {
         let _lock = CLIPBOARD_LOCK.lock().unwrap();
         let clipboard = create_clipboard();

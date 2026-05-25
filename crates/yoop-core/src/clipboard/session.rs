@@ -1867,7 +1867,7 @@ impl SyncSessionRunner {
     /// Returns an error if sync fails.
     #[allow(clippy::too_many_lines)]
     pub async fn run(self) -> Result<(SyncStats, mpsc::Receiver<SyncEvent>)> {
-        let (event_tx, event_rx) = mpsc::channel(32);
+        let (event_tx, event_rx) = mpsc::channel(128);
 
         let started_at = Instant::now();
 
@@ -1959,12 +1959,12 @@ impl SyncSessionRunner {
                     items_sent_clone.fetch_add(1, Ordering::SeqCst);
                     bytes_sent_clone.fetch_add(change.content.size(), Ordering::SeqCst);
 
-                    let _ = event_tx_clone
-                        .send(SyncEvent::Sent {
-                            content_type: change.content.content_type(),
-                            size: change.content.size(),
-                        })
-                        .await;
+                    if let Err(e) = event_tx_clone.try_send(SyncEvent::Sent {
+                        content_type: change.content.content_type(),
+                        size: change.content.size(),
+                    }) {
+                        tracing::debug!("Outbound: dropping sync event: {}", e);
+                    }
 
                     tracing::debug!("Outbound: change sent successfully");
                 }
@@ -2084,12 +2084,12 @@ impl SyncSessionRunner {
                                         bytes_received_clone
                                             .fetch_add(content_size, Ordering::SeqCst);
 
-                                        let _ = event_tx
-                                            .send(SyncEvent::Received {
-                                                content_type: changed.content_type,
-                                                size: changed.size,
-                                            })
-                                            .await;
+                                        if let Err(e) = event_tx.try_send(SyncEvent::Received {
+                                            content_type: changed.content_type,
+                                            size: changed.size,
+                                        }) {
+                                            tracing::debug!("Inbound: dropping sync event: {}", e);
+                                        }
 
                                         tracing::info!(
                                             "Inbound: clipboard updated successfully ({:?}, {} bytes)",

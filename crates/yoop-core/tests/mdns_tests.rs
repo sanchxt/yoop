@@ -201,9 +201,17 @@ async fn test_hybrid_broadcaster_lifecycle() {
 
 /// Test hybrid listener find with timeout.
 #[tokio::test]
+#[cfg_attr(windows, ignore = "Windows CI can deny UDP socket binding")]
 async fn test_hybrid_listener_find_timeout() {
     let port = 53200 + (std::process::id() % 100) as u16;
-    let listener = HybridListener::new(port).await.expect("create listener");
+    let listener = match HybridListener::new(port).await {
+        Ok(listener) => listener,
+        Err(yoop_core::Error::Io(e)) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+            eprintln!("Skipping test: UDP socket binding not permitted in this environment");
+            return;
+        }
+        Err(e) => panic!("create listener: {e}"),
+    };
 
     let code = CodeGenerator::new().generate().expect("generate code");
     let result = listener.find(&code, Duration::from_millis(200)).await;

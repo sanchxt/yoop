@@ -160,9 +160,7 @@ impl TransferHistoryEntry {
     pub fn with_stats(mut self, bytes_transferred: u64, duration_secs: u64) -> Self {
         self.bytes_transferred = bytes_transferred;
         self.duration_secs = duration_secs;
-        if duration_secs > 0 {
-            self.speed_bps = Some(bytes_transferred / duration_secs);
-        }
+        self.speed_bps = bytes_transferred.checked_div(duration_secs);
         self
     }
 
