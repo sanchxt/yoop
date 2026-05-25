@@ -300,9 +300,7 @@ impl App {
         }
 
         if let Some(sync) = cli_clipboard_sync {
-            if self.state.clipboard_sync.is_none() {
-                self.state.clipboard_sync = Some(sync);
-            }
+            self.state.clipboard_sync = Some(sync);
         }
     }
 
@@ -555,6 +553,7 @@ impl App {
                     self.state.clipboard_sync = Some(super::state::ClipboardSyncSession {
                         peer_name: peer_name.clone(),
                         peer_address: peer_addr,
+                        status: "connected".to_string(),
                         items_sent: 0,
                         items_received: 0,
                         started_at: chrono::Utc::now(),
@@ -2246,6 +2245,7 @@ impl App {
                     self.state.clipboard_sync = Some(super::state::ClipboardSyncSession {
                         peer_name: peer_name.clone(),
                         peer_address: peer_addr,
+                        status: "connected".to_string(),
                         items_sent: 0,
                         items_received: 0,
                         started_at: chrono::Utc::now(),
@@ -2686,6 +2686,7 @@ fn load_cli_sessions(
         .map(|sync| TuiClipboardSync {
             peer_name: sync.peer_name.clone(),
             peer_address: sync.peer_address.clone(),
+            status: sync.status.clone(),
             items_sent: sync.items_sent,
             items_received: sync.items_received,
             started_at: sync.started_at,

@@ -84,6 +84,9 @@ pub struct ClipboardSyncEntry {
     pub peer_name: String,
     /// Peer network address.
     pub peer_address: String,
+    /// Current sync status, e.g. "connected" or "retrying".
+    #[serde(default = "default_clipboard_sync_status")]
+    pub status: String,
     /// Process ID.
     pub pid: u32,
     /// When the session started.
@@ -92,6 +95,10 @@ pub struct ClipboardSyncEntry {
     pub items_sent: u64,
     /// Number of items received.
     pub items_received: u64,
+}
+
+fn default_clipboard_sync_status() -> String {
+    "connected".to_string()
 }
 
 impl SessionStateFile {
@@ -375,6 +382,21 @@ mod tests {
         let parsed: SessionEntry = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.session_type, "share");
         assert_eq!(parsed.code, Some("A7K9".to_string()));
+    }
+
+    #[test]
+    fn test_clipboard_sync_status_defaults_to_connected() {
+        let json = r#"{
+            "peer_name": "device",
+            "peer_address": "127.0.0.1:52530",
+            "pid": 12345,
+            "started_at": "2026-05-08T10:00:00Z",
+            "items_sent": 0,
+            "items_received": 0
+        }"#;
+
+        let parsed: ClipboardSyncEntry = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.status, "connected");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! CLI command definitions and handlers.
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{ArgAction, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
 /// Load configuration with graceful fallback to defaults.
@@ -536,6 +536,10 @@ pub struct ClipboardSyncArgs {
     /// Connect to a trusted device by name (no code needed)
     #[arg(long, value_name = "NAME", conflicts_with = "code")]
     pub device: Option<String>,
+
+    /// Disable automatic reconnects for trusted-device sync
+    #[arg(long = "no-keepalive", action = ArgAction::SetFalse, default_value_t = true)]
+    pub keepalive: bool,
 }
 
 /// Arguments for internal clipboard hold command (not user-facing)

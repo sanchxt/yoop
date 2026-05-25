@@ -70,7 +70,11 @@ impl StatusBar {
             Some(sync) => Line::from(vec![
                 Span::styled("● ", Style::default().fg(theme.accent)),
                 Span::styled(
-                    format!("Synced: {}", sync.peer_name),
+                    if sync.status == "retrying" {
+                        format!("Retrying: {}", sync.peer_name)
+                    } else {
+                        format!("Synced: {}", sync.peer_name)
+                    },
                     Style::default().fg(theme.text_primary),
                 ),
             ]),
@@ -117,6 +121,9 @@ impl StatusBar {
         frame.render_widget(Paragraph::new(Line::from(transfer_content)), chunks[0]);
 
         let clipboard_content = match &state.clipboard_sync {
+            Some(sync) if sync.status == "retrying" => {
+                Span::styled("Clip:retry", Style::default().fg(theme.warning))
+            }
             Some(_) => Span::styled("Clip:sync", Style::default().fg(theme.accent)),
             None => Span::styled("Clip:idle", Style::default().fg(theme.text_muted)),
         };
